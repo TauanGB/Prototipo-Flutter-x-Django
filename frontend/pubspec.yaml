@@ -41,9 +41,6 @@ dependencies:
   # Location services
   geolocator: ^10.1.0
   
-  # Background service
-  flutter_background_service: ^5.0.5
-  
   # Permission handling
   permission_handler: ^11.0.1
   
