@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_LOCATION_EXTRA_COMMANDS" />
     
     <!-- Permissões de rede -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -12,6 +13,7 @@
     <!-- Permissões para foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     
     <!-- Permissões para notificações -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -28,7 +30,10 @@
     <application
         android:label="frontend"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        tools:replace="android:allowBackup">
+        
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -59,6 +64,10 @@
             android:exported="false"
             android:foregroundServiceType="location"
             tools:replace="android:exported" />
+            
+        <!-- Remove o serviço de foreground conflitante do plugin Geolocator -->
+        <service android:name="com.baseflow.geolocator.GeolocatorLocationService"
+            tools:node="remove" />
         
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
