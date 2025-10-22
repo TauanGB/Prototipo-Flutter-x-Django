@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:geolocator/geolocator.dart';
 
 class LocationService {
@@ -49,10 +50,17 @@ class LocationService {
         return null;
       }
 
-      // Obtém a posição atual
+      // Obtém a posição atual com configurações específicas de plataforma
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: Duration(seconds: 10),
+        locationSettings: Platform.isIOS 
+          ? AppleSettings(
+              accuracy: LocationAccuracy.high,
+              timeLimit: const Duration(seconds: 10),
+            )
+          : AndroidSettings(
+              accuracy: LocationAccuracy.high,
+              timeLimit: const Duration(seconds: 10),
+            ),
       );
 
       return position;

@@ -1,4 +1,5 @@
 ﻿from django.db import models
+from django.utils import timezone
 
 
 class TimeStampedModel(models.Model):
@@ -12,92 +13,66 @@ class TimeStampedModel(models.Model):
         abstract = True
 
 
-class Location(TimeStampedModel):
+class Driver(TimeStampedModel):
     """
-    Modelo para armazenar localizacoes fixas
+    Modelo simplificado para motoristas usando CPF como identificador
     """
-    name = models.CharField(max_length=100)
-    address = models.TextField()
-    latitude = models.DecimalField(max_digits=10, decimal_places=7)
-    longitude = models.DecimalField(max_digits=10, decimal_places=7)
-    description = models.TextField(blank=True, null=True)
-    created_by = models.ForeignKey('users.User', on_delete=models.CASCADE)
+    cpf = models.CharField(max_length=14, unique=True, help_text="CPF do motorista")
+    name = models.CharField(max_length=100, help_text="Nome completo do motorista")
+    phone = models.CharField(max_length=20, blank=True, null=True, help_text="Telefone do motorista")
+    is_active = models.BooleanField(default=True, help_text="Motorista ativo")
 
     class Meta:
-        verbose_name = 'Localizacao'
-        verbose_name_plural = 'Localizacoes'
+        verbose_name = 'Motorista'
+        verbose_name_plural = 'Motoristas'
+        ordering = ['name']
 
     def __str__(self):
-        return self.name
+        return f"{self.name} - {self.cpf}"
 
 
 class DriverLocation(TimeStampedModel):
     """
-    Modelo para armazenar localizacao em tempo real do motorista
+    Modelo simplificado para localização do motorista
     """
-    STATUS_CHOICES = [
-        ('online', 'Online'),
-        ('offline', 'Offline'),
-        ('driving', 'Dirigindo'),
-        ('stopped', 'Parado'),
-        ('break', 'Em Pausa'),
-    ]
-
-    driver = models.ForeignKey('users.User', on_delete=models.CASCADE, related_name='driver_locations')
+    driver = models.ForeignKey(Driver, on_delete=models.CASCADE, related_name='locations')
     latitude = models.DecimalField(max_digits=10, decimal_places=7)
     longitude = models.DecimalField(max_digits=10, decimal_places=7)
-    accuracy = models.FloatField(null=True, blank=True, help_text="Precisao da localizacao em metros")
+    accuracy = models.FloatField(null=True, blank=True, help_text="Precisão da localização em metros")
     speed = models.FloatField(null=True, blank=True, help_text="Velocidade em km/h")
-    heading = models.FloatField(null=True, blank=True, help_text="Direcao em graus")
-    altitude = models.FloatField(null=True, blank=True, help_text="Altitude em metros")
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='online')
-    battery_level = models.IntegerField(null=True, blank=True, help_text="Nivel da bateria em %")
-    is_gps_enabled = models.BooleanField(default=True)
-    device_id = models.CharField(max_length=100, blank=True, null=True, help_text="ID unico do dispositivo")
-    app_version = models.CharField(max_length=20, blank=True, null=True)
-    timestamp = models.DateTimeField(auto_now_add=True, help_text="Timestamp do GPS")
+    battery_level = models.IntegerField(null=True, blank=True, help_text="Nível da bateria em %")
+    timestamp = models.DateTimeField(default=timezone.now, help_text="Timestamp do GPS")
 
     class Meta:
-        verbose_name = 'Localizacao do Motorista'
-        verbose_name_plural = 'Localizacoes dos Motoristas'
+        verbose_name = 'Localização do Motorista'
+        verbose_name_plural = 'Localizações dos Motoristas'
         ordering = ['-timestamp']
         indexes = [
             models.Index(fields=['driver', '-timestamp']),
-            models.Index(fields=['status', '-timestamp']),
         ]
 
     def __str__(self):
-        return f"{self.driver.username} - {self.latitude}, {self.longitude} - {self.status}"
-
-    @property
-    def full_name(self):
-        return f"{self.driver.first_name} {self.driver.last_name}".strip() or self.driver.username
+        return f"{self.driver.name} - {self.latitude}, {self.longitude}"
 
 
 class DriverTrip(TimeStampedModel):
     """
-    Modelo para armazenar viagens dos motoristas
+    Modelo simplificado para viagens dos motoristas
     """
     STATUS_CHOICES = [
         ('started', 'Iniciada'),
-        ('in_progress', 'Em Andamento'),
-        ('completed', 'Concluida'),
+        ('completed', 'Concluída'),
         ('cancelled', 'Cancelada'),
     ]
 
-    driver = models.ForeignKey('users.User', on_delete=models.CASCADE, related_name='trips')
-    start_location = models.ForeignKey(
-        DriverLocation, 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        related_name='trips_started'
-    )
-    end_location = models.ForeignKey(
-        DriverLocation, 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        related_name='trips_ended'
-    )
+    driver = models.ForeignKey(Driver, on_delete=models.CASCADE, related_name='trips')
+    start_latitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    start_longitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    end_latitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    end_longitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    # Posição atual durante a viagem
+    current_latitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True, help_text="Posição atual durante a viagem")
+    current_longitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True, help_text="Posição atual durante a viagem")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='started')
     distance_km = models.FloatField(null=True, blank=True)
     duration_minutes = models.IntegerField(null=True, blank=True)
@@ -110,31 +85,4 @@ class DriverTrip(TimeStampedModel):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"Viagem {self.id} - {self.driver.username} - {self.status}"
-
-
-class TestSession(TimeStampedModel):
-    """
-    Modelo para sessoes de teste
-    """
-    STATUS_CHOICES = [
-        ('draft', 'Rascunho'),
-        ('active', 'Ativa'),
-        ('completed', 'Concluida'),
-        ('cancelled', 'Cancelada'),
-    ]
-
-    name = models.CharField(max_length=100)
-    description = models.TextField(blank=True, null=True)
-    location = models.ForeignKey(Location, on_delete=models.CASCADE)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
-    started_at = models.DateTimeField(null=True, blank=True)
-    completed_at = models.DateTimeField(null=True, blank=True)
-    created_by = models.ForeignKey('users.User', on_delete=models.CASCADE)
-
-    class Meta:
-        verbose_name = 'Sessao de Teste'
-        verbose_name_plural = 'Sessoes de Teste'
-
-    def __str__(self):
-        return self.name
+        return f"Viagem {self.id} - {self.driver.name} - {self.status}"

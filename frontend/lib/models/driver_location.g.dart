@@ -10,14 +10,16 @@ DriverLocation _$DriverLocationFromJson(Map<String, dynamic> json) =>
     DriverLocation(
       id: (json['id'] as num?)?.toInt(),
       driver: (json['driver'] as num?)?.toInt(),
+      cpf: json['cpf'] as String?,
       driverName: json['driver_name'] as String?,
+      driverCpf: json['driver_cpf'] as String?,
       driverUsername: json['driver_username'] as String?,
-      latitude: _parseDouble(json['latitude']),
-      longitude: _parseDouble(json['longitude']),
-      accuracy: _parseDoubleNullable(json['accuracy']),
-      speed: _parseDoubleNullable(json['speed']),
-      heading: _parseDoubleNullable(json['heading']),
-      altitude: _parseDoubleNullable(json['altitude']),
+      latitude: (json['latitude'] as num).toDouble(),
+      longitude: (json['longitude'] as num).toDouble(),
+      accuracy: (json['accuracy'] as num?)?.toDouble(),
+      speed: (json['speed'] as num?)?.toDouble(),
+      heading: (json['heading'] as num?)?.toDouble(),
+      altitude: (json['altitude'] as num?)?.toDouble(),
       status: json['status'] as String? ?? 'online',
       batteryLevel: (json['battery_level'] as num?)?.toInt(),
       isGpsEnabled: json['is_gps_enabled'] as bool? ?? true,
@@ -34,24 +36,13 @@ DriverLocation _$DriverLocationFromJson(Map<String, dynamic> json) =>
           : DateTime.parse(json['updated_at'] as String),
     );
 
-double _parseDouble(dynamic value) {
-  if (value is num) return value.toDouble();
-  if (value is String) return double.parse(value);
-  throw ArgumentError('Cannot parse $value to double');
-}
-
-double? _parseDoubleNullable(dynamic value) {
-  if (value == null) return null;
-  if (value is num) return value.toDouble();
-  if (value is String) return double.parse(value);
-  throw ArgumentError('Cannot parse $value to double');
-}
-
 Map<String, dynamic> _$DriverLocationToJson(DriverLocation instance) =>
     <String, dynamic>{
       'id': instance.id,
       'driver': instance.driver,
+      'cpf': instance.cpf,
       'driver_name': instance.driverName,
+      'driver_cpf': instance.driverCpf,
       'driver_username': instance.driverUsername,
       'latitude': instance.latitude,
       'longitude': instance.longitude,

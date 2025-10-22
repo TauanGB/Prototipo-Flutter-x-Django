@@ -32,4 +32,15 @@ class AppConfig {
   
   // Configurações de UI
   static const Duration snackBarDuration = Duration(seconds: 3);
+  
+  // Configurações do serviço de background
+  static const int defaultBackgroundInterval = 30; // segundos
+  static const int minBackgroundInterval = 15; // segundos
+  static const int maxBackgroundInterval = 300; // 5 minutos
+  
+  // Textos da UI centralizados
+  static const String startTrackingText = 'Iniciar Rastreamento';
+  static const String stopTrackingText = 'Parar Rastreamento';
+  static const String trackingServiceText = 'Rastreamento em Background';
+  static const String advancedSettingsText = 'Configurações Avançadas';
 }

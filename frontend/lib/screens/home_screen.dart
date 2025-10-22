@@ -1,12 +1,15 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/driver_location.dart';
+import '../models/driver_trip.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
-import '../services/auto_location_service.dart';
 import '../services/background_location_service.dart';
 import '../config/app_config.dart';
+import '../utils/cpf_validator.dart';
 import 'config_screen.dart';
+import 'cpf_config_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -17,37 +20,34 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   DriverLocation? _lastLocation;
+  DriverTrip? _activeTrip;
   bool _isLoading = false;
   String _status = 'online';
   double? _batteryLevel;
+  String _cpf = '';
+  bool _hasCpfConfigured = false;
   final List<String> _statusOptions = AppConfig.driverStatuses;
   final TextEditingController _batteryController = TextEditingController();
-  late AutoLocationService _autoLocationService;
   
   // Variáveis para o serviço de background
   bool _isBackgroundServiceRunning = false;
-  int _backgroundServiceInterval = 30;
+  int _backgroundServiceInterval = AppConfig.defaultBackgroundInterval;
+  Timer? _tripValidationTimer;
 
   @override
   void initState() {
     super.initState();
-    _autoLocationService = AutoLocationService();
-    _autoLocationService.addListener(_onAutoLocationServiceChanged);
     _checkLocationPermission();
     _loadBackgroundServiceState();
+    _loadSavedCpf();
+    _validateTripRequirement();
   }
 
   @override
   void dispose() {
     _batteryController.dispose();
-    _autoLocationService.removeListener(_onAutoLocationServiceChanged);
+    _tripValidationTimer?.cancel();
     super.dispose();
-  }
-
-  void _onAutoLocationServiceChanged() {
-    setState(() {
-      // Apenas atualiza a UI, não chama métodos que disparam notifyListeners
-    });
   }
 
   Future<void> _checkLocationPermission() async {
@@ -65,36 +65,155 @@ class _HomeScreenState extends State<HomeScreen> {
       _isBackgroundServiceRunning = isRunning;
       _backgroundServiceInterval = interval;
     });
+    
+    // Valida se há viagem ativa quando o serviço está rodando
+    if (isRunning && _activeTrip == null) {
+      await _validateTripRequirement();
+    }
   }
 
-  Future<void> _toggleBackgroundService() async {
+  Future<void> _loadSavedCpf() async {
+    final savedCpf = await BackgroundLocationService.getSavedCpf();
+    setState(() {
+      _cpf = savedCpf;
+      _hasCpfConfigured = savedCpf.isNotEmpty;
+    });
+  }
+
+  Future<void> _validateTripRequirement() async {
+    // Verifica se o rastreamento está ativo mas sem viagem associada
+    if (_isBackgroundServiceRunning && _activeTrip == null) {
+      // Para o rastreamento automaticamente
+      await BackgroundLocationService.stopService();
+      setState(() {
+        _isBackgroundServiceRunning = false;
+      });
+      
+      // Para o timer de validação
+      _tripValidationTimer?.cancel();
+      
+      // Mostra aviso ao usuário
+      if (mounted) {
+        _showSnackBar('Rastreamento encerrado: viagem é obrigatória', isError: true);
+      }
+    }
+  }
+
+  void _startTripValidationTimer() {
+    _tripValidationTimer?.cancel();
+    _tripValidationTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      if (_isBackgroundServiceRunning && _activeTrip == null) {
+        _validateTripRequirement();
+      }
+    });
+  }
+
+  Future<void> _startTripAndTracking() async {
     setState(() {
       _isLoading = true;
     });
 
     try {
-      if (_isBackgroundServiceRunning) {
-        await BackgroundLocationService.stopService();
-        _showSnackBar('Serviço de background parado');
-      } else {
-        // Verifica permissões antes de iniciar
-        bool hasPermission = await LocationService.hasPermission();
-        if (!hasPermission) {
-          await LocationService.requestPermission();
-          hasPermission = await LocationService.hasPermission();
-          if (!hasPermission) {
-            _showSnackBar('Permissões de localização são necessárias para o serviço de background', isError: true);
-            return;
-          }
-        }
-        
-        await BackgroundLocationService.startService();
-        _showSnackBar('Serviço de background iniciado');
+      // Verifica CPF antes de iniciar
+      if (!_hasCpfConfigured) {
+        _showCpfRequiredDialog();
+        return;
       }
       
+      // Verifica permissões antes de iniciar
+      bool hasPermission = await LocationService.hasPermission();
+      if (!hasPermission) {
+        await LocationService.requestPermission();
+        hasPermission = await LocationService.hasPermission();
+        if (!hasPermission) {
+          _showSnackBar('Permissões de localização são necessárias para iniciar viagem', isError: true);
+          return;
+        }
+      }
+
+      // Obtém a localização atual para iniciar a viagem
+      final position = await LocationService.getCurrentPosition();
+      if (position == null) {
+        _showSnackBar('Não foi possível obter a localização para iniciar viagem', isError: true);
+        return;
+      }
+
+      // 1. Inicia a viagem na API
+      final trip = await ApiService.startTrip(
+        CpfValidator.cleanCpf(_cpf),
+        position.latitude,
+        position.longitude,
+      );
+      
+      if (trip == null) {
+        _showSnackBar('Erro ao iniciar viagem na API', isError: true);
+        return;
+      }
+
+      // 2. Salva o CPF para uso no background service
+      await BackgroundLocationService.saveCpf(CpfValidator.cleanCpf(_cpf));
+      
+      // 3. Inicia o serviço de rastreamento
+      await BackgroundLocationService.startService();
+      
+      // 4. Atualiza estado local
+      setState(() {
+        _activeTrip = trip;
+      });
+      
+      // 5. Salva status da viagem ativa
+      await BackgroundLocationService.setActiveTripStatus(true);
+      
+      // 6. Inicia timer de validação
+      _startTripValidationTimer();
+      
+      _showSnackBar('Viagem iniciada e rastreamento ativo!');
       await _loadBackgroundServiceState();
     } catch (e) {
-      _showSnackBar('Erro ao controlar serviço de background: $e', isError: true);
+      _showSnackBar('Erro ao iniciar viagem: $e', isError: true);
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _stopTripAndTracking() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // 1. Para o serviço de rastreamento
+      await BackgroundLocationService.stopService();
+      
+      // 2. Se há viagem ativa, finaliza ela
+      if (_activeTrip != null) {
+        final position = await LocationService.getCurrentPosition();
+        if (position != null) {
+          await ApiService.endTrip(
+            CpfValidator.cleanCpf(_cpf),
+            position.latitude,
+            position.longitude,
+          );
+        }
+      }
+      
+      // 3. Atualiza estado local
+      setState(() {
+        _activeTrip = null;
+      });
+      
+      // 4. Salva status da viagem ativa
+      await BackgroundLocationService.setActiveTripStatus(false);
+      
+      // 5. Para o timer de validação
+      _tripValidationTimer?.cancel();
+      
+      _showSnackBar('Viagem finalizada e rastreamento parado!');
+      await _loadBackgroundServiceState();
+    } catch (e) {
+      _showSnackBar('Erro ao parar viagem: $e', isError: true);
     } finally {
       setState(() {
         _isLoading = false;
@@ -135,7 +254,7 @@ class _HomeScreenState extends State<HomeScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Digite o intervalo em segundos (mínimo: 15s):'),
+            Text('Digite o intervalo em segundos (mínimo: ${AppConfig.minBackgroundInterval}s):'),
             const SizedBox(height: 16),
             TextField(
               controller: controller,
@@ -156,10 +275,10 @@ class _HomeScreenState extends State<HomeScreen> {
           TextButton(
             onPressed: () {
               final value = int.tryParse(controller.text);
-              if (value != null && value >= 15) {
+              if (value != null && value >= AppConfig.minBackgroundInterval && value <= AppConfig.maxBackgroundInterval) {
                 Navigator.of(context).pop(value);
               } else {
-                _showSnackBar('Intervalo deve ser pelo menos 15 segundos', isError: true);
+                _showSnackBar('Intervalo deve estar entre ${AppConfig.minBackgroundInterval} e ${AppConfig.maxBackgroundInterval} segundos', isError: true);
               }
             },
             child: const Text('Salvar'),
@@ -175,6 +294,12 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
+      // Verifica CPF antes de enviar
+      if (!_hasCpfConfigured) {
+        _showCpfRequiredDialog();
+        return;
+      }
+
       // Obtém a localização atual
       final position = await LocationService.getCurrentPosition();
       if (position == null) {
@@ -184,17 +309,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
       // Cria o objeto de localização
       final location = DriverLocation(
+        cpf: CpfValidator.cleanCpf(_cpf),
         latitude: position.latitude,
         longitude: position.longitude,
         accuracy: position.accuracy,
         speed: position.speed,
-        heading: position.heading,
-        altitude: position.altitude,
-        status: _status,
         batteryLevel: _batteryLevel?.round(),
-        isGpsEnabled: true,
-        deviceId: 'flutter_app_${DateTime.now().millisecondsSinceEpoch}',
-        appVersion: AppConfig.appVersion,
       );
 
       // Envia para a API
@@ -217,51 +337,69 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _updateStatus() async {
-    setState(() {
-      _isLoading = true;
-    });
 
-    try {
-      final result = await ApiService.updateDriverStatus(_status);
-      if (result != null) {
-        setState(() {
-          _lastLocation = result;
-        });
-        _showSnackBar('Status atualizado com sucesso!');
-      } else {
-        _showSnackBar('Erro ao atualizar status', isError: true);
-      }
-    } catch (e) {
-      _showSnackBar('Erro: $e', isError: true);
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
-    }
+
+  Future<void> _showCpfRequiredDialog() async {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.warning, color: Colors.orange, size: 28),
+              const SizedBox(width: 8),
+              const Text('CPF Obrigatório'),
+            ],
+          ),
+          content: const Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Para usar o aplicativo, você precisa configurar seu CPF.',
+                style: TextStyle(fontSize: 16),
+              ),
+              SizedBox(height: 16),
+              Text('• O CPF deve estar cadastrado no sistema'),
+              Text('• Será validado automaticamente'),
+              Text('• Fica salvo para próximas sessões'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _navigateToCpfConfig();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Configurar CPF'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
-  Future<void> _getCurrentLocation() async {
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final location = await ApiService.getCurrentLocation();
-      if (location != null) {
-        setState(() {
-          _lastLocation = location;
-        });
-        _showSnackBar('Localização atual obtida!');
-      } else {
-        _showSnackBar('Nenhuma localização encontrada', isError: true);
-      }
-    } catch (e) {
-      _showSnackBar('Erro: $e', isError: true);
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
+  Future<void> _navigateToCpfConfig() async {
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (context) => const CpfConfigScreen()),
+    );
+    
+    if (result == true) {
+      // CPF foi configurado, recarrega os dados
+      await _loadSavedCpf();
+      _showSnackBar('CPF configurado com sucesso!');
     }
   }
 
@@ -275,27 +413,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _toggleAutoLocation() async {
-    if (_autoLocationService.isRunning) {
-      _autoLocationService.stop();
-      _showSnackBar('Serviço automático pausado');
-    } else {
-      // Verifica permissões antes de iniciar
-      bool hasPermission = await LocationService.hasPermission();
-      if (!hasPermission) {
-        await LocationService.requestPermission();
-        hasPermission = await LocationService.hasPermission();
-        if (!hasPermission) {
-          _showSnackBar('Permissões de localização são necessárias para iniciar o serviço', isError: true);
-          return;
-        }
-      }
-      
-      await _autoLocationService.start();
-      String message = 'Serviço automático iniciado - Enviando a cada ${_autoLocationService.intervalSeconds}s';
-      _showSnackBar(message);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -314,11 +431,6 @@ class _HomeScreenState extends State<HomeScreen> {
             },
             tooltip: 'Configurações da API',
           ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _getCurrentLocation,
-            tooltip: 'Obter Localização Atual',
-          ),
         ],
       ),
       body: SingleChildScrollView(
@@ -326,21 +438,409 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Card de Status
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
+                  // Card Principal - Rastreamento em Background
+                  Card(
+                    elevation: 8,
+                    color: _isBackgroundServiceRunning 
+                        ? Colors.green.shade50 
+                        : _hasCpfConfigured 
+                            ? Colors.grey.shade50 
+                            : Colors.orange.shade50,
+                    child: Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Status do Motorista',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 16),
+                    // Header com ícone e título
                     Row(
                       children: [
-                        const Text('Status: '),
+                        Icon(
+                          _isBackgroundServiceRunning ? Icons.my_location : Icons.location_off,
+                          color: _isBackgroundServiceRunning ? Colors.green : Colors.grey,
+                          size: 32,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                AppConfig.trackingServiceText,
+                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  color: _isBackgroundServiceRunning ? Colors.green.shade700 : Colors.grey.shade700,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                BackgroundLocationService.getImplementationInfo(),
+                                style: TextStyle(
+                                  color: _isBackgroundServiceRunning ? Colors.green.shade600 : Colors.grey.shade600,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    
+                            const SizedBox(height: 20),
+
+                            // Alerta de CPF não configurado
+                            if (!_hasCpfConfigured) ...[
+                              Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.shade100,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.orange.shade300),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.warning, color: Colors.orange.shade700),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'CPF não configurado',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.orange.shade700,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'Configure seu CPF nas configurações avançadas para usar o aplicativo.',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.orange.shade600,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                            ],
+
+                            // Status e informações
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: _isBackgroundServiceRunning 
+                                    ? Colors.green.shade100 
+                                    : _hasCpfConfigured 
+                                        ? Colors.grey.shade100 
+                                        : Colors.orange.shade100,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                _isBackgroundServiceRunning ? Icons.play_circle_filled : Icons.pause_circle_filled,
+                                color: _isBackgroundServiceRunning ? Colors.green : Colors.grey,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                _isBackgroundServiceRunning 
+                                  ? 'Rastreamento Ativo'
+                                  : 'Rastreamento Inativo',
+                                style: TextStyle(
+                                  color: _isBackgroundServiceRunning ? Colors.green.shade800 : Colors.grey.shade800,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (_isBackgroundServiceRunning) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              'Enviando a cada $_backgroundServiceInterval segundos',
+                              style: TextStyle(
+                                color: Colors.green.shade700,
+                                fontSize: 12,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Icon(Icons.info, color: Colors.blue, size: 16),
+                                const SizedBox(width: 4),
+                                const Text('Funciona mesmo com app fechado'),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 24),
+                    
+                            // Botão principal
+                            SizedBox(
+                              width: double.infinity,
+                              height: 56,
+                              child: ElevatedButton.icon(
+                                onPressed: (_isLoading || !_hasCpfConfigured) ? null : (_isBackgroundServiceRunning ? _stopTripAndTracking : _startTripAndTracking),
+                                icon: Icon(_isBackgroundServiceRunning ? Icons.stop : Icons.play_arrow, size: 24),
+                                label: Text(
+                                  !_hasCpfConfigured 
+                                      ? 'Configure CPF primeiro'
+                                      : _isBackgroundServiceRunning 
+                                          ? 'Parar Viagem' 
+                                          : 'Iniciar Viagem',
+                                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: !_hasCpfConfigured 
+                                      ? Colors.grey
+                                      : _isBackgroundServiceRunning 
+                                          ? Colors.red 
+                                          : Colors.green,
+                                  foregroundColor: Colors.white,
+                                  elevation: 4,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                              ),
+                            ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+                            // Card de Status da Viagem e Rastreamento
+            if (_activeTrip != null || _isBackgroundServiceRunning) ...[
+              Card(
+                elevation: 4,
+                color: Colors.blue.shade50,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.directions_car, color: Colors.blue.shade700),
+                          const SizedBox(width: 8),
+                          Text(
+                            _activeTrip != null ? 'Viagem Ativa' : 'Rastreamento Ativo',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue.shade700,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.green,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              'EM ANDAMENTO',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      if (_activeTrip != null) ...[
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Iniciada em:',
+                                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                                  ),
+                                  Text(
+                                    _activeTrip!.startedAt != null 
+                                        ? _formatDateTime(_activeTrip!.startedAt!)
+                                        : 'N/A',
+                                    style: TextStyle(fontWeight: FontWeight.w500),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Duração:',
+                                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                                  ),
+                                  Text(
+                                    _activeTrip!.formattedDuration,
+                                    style: TextStyle(fontWeight: FontWeight.w500),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade100,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.location_on, color: Colors.green.shade700, size: 16),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Localização sendo enviada automaticamente a cada $_backgroundServiceInterval segundos',
+                                  style: TextStyle(
+                                    color: Colors.green.shade700,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ] else ...[
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade100,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.red.shade300),
+                          ),
+                          child: Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.error, color: Colors.red.shade700, size: 16),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Rastreamento ativo sem viagem associada',
+                                      style: TextStyle(
+                                        color: Colors.red.shade700,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'O rastreamento será encerrado automaticamente em breve. Viagem é obrigatória.',
+                                style: TextStyle(
+                                  color: Colors.red.shade600,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // Configurações Avançadas (ExpansionTile)
+            Card(
+              child: ExpansionTile(
+                title: Text(
+                  AppConfig.advancedSettingsText,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                leading: const Icon(Icons.settings),
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      children: [
+                        // Configuração de CPF
+                        Card(
+                          color: _hasCpfConfigured ? Colors.green.shade50 : Colors.orange.shade50,
+                          child: Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(
+                                      _hasCpfConfigured ? Icons.check_circle : Icons.warning,
+                                      color: _hasCpfConfigured ? Colors.green : Colors.orange,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'CPF do Motorista',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: _hasCpfConfigured ? Colors.green.shade700 : Colors.orange.shade700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                if (_hasCpfConfigured) ...[
+                                  Text(
+                                    'CPF configurado: ${CpfValidator.formatCpf(_cpf)}',
+                                    style: TextStyle(color: Colors.green.shade700),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  const Text(
+                                    'Você pode alterar nas configurações.',
+                                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                                  ),
+                                ] else ...[
+                                  const Text(
+                                    'CPF não configurado. É obrigatório para usar o aplicativo.',
+                                    style: TextStyle(color: Colors.orange),
+                                  ),
+                                ],
+                                const SizedBox(height: 12),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: OutlinedButton.icon(
+                                    onPressed: () => _navigateToCpfConfig(),
+                                    icon: Icon(_hasCpfConfigured ? Icons.edit : Icons.add),
+                                    label: Text(_hasCpfConfigured ? 'Alterar CPF' : 'Configurar CPF'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        
+                        const SizedBox(height: 16),
+                        
+                        // Status do Motorista
+                        Row(
+                          children: [
+                            const Text('Status: '),
                         Expanded(
                           child: DropdownButton<String>(
                             value: _status,
@@ -356,15 +856,16 @@ class _HomeScreenState extends State<HomeScreen> {
                                 setState(() {
                                   _status = newValue;
                                 });
-                                // Atualiza o status no serviço automático
-                                _autoLocationService.updateStatusSilent(_status);
                               }
                             },
                           ),
                         ),
                       ],
                     ),
+                        
                     const SizedBox(height: 16),
+                        
+                        // Bateria
                     Row(
                       children: [
                         const Text('Bateria (%): '),
@@ -380,8 +881,6 @@ class _HomeScreenState extends State<HomeScreen> {
                               setState(() {
                                 _batteryLevel = double.tryParse(value);
                               });
-                              // Atualiza o nível da bateria no serviço automático
-                              _autoLocationService.updateBatteryLevelSilent(_batteryLevel);
                             },
                             decoration: const InputDecoration(
                               hintText: 'Ex: 85',
@@ -390,206 +889,43 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                       ],
-                    ),
-                  ],
-                ),
-              ),
             ),
             
             const SizedBox(height: 16),
 
-            // Botão de Controle Automático
-            Card(
-              color: _autoLocationService.isRunning ? Colors.green.shade50 : Colors.grey.shade50,
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+                        // Botões de ação
                     Row(
                       children: [
-                        Icon(
-                          _autoLocationService.isRunning ? Icons.play_circle : Icons.pause_circle,
-                          color: _autoLocationService.isRunning ? Colors.green : Colors.grey,
-                          size: 24,
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: _isLoading ? null : _updateBackgroundServiceInterval,
+                                icon: const Icon(Icons.timer),
+                                label: const Text('Intervalo'),
+                              ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Text(
-                            'Serviço Automático de Localização',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              color: _autoLocationService.isRunning ? Colors.green.shade700 : Colors.grey.shade700,
+                              child: OutlinedButton.icon(
+                                onPressed: _isLoading ? null : _sendLocation,
+                                icon: const Icon(Icons.location_on),
+                                label: const Text('Teste Manual'),
+                              ),
                             ),
-                          ),
+                          ],
                         ),
-                      ],
-                    ),
+                        
                     const SizedBox(height: 8),
-                    Text(
-                      _autoLocationService.isRunning 
-                        ? 'Enviando localização a cada ${_autoLocationService.intervalSeconds} segundos'
-                        : 'Serviço pausado',
-                      style: TextStyle(
-                        color: _autoLocationService.isRunning ? Colors.green.shade600 : Colors.grey.shade600,
-                      ),
-                    ),
-                    if (_autoLocationService.isRunning) ...[
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Icon(Icons.check_circle, color: Colors.green, size: 16),
-                          const SizedBox(width: 4),
-                          Text('Sucessos: ${_autoLocationService.successCount}'),
-                          const SizedBox(width: 16),
-                          Icon(Icons.error, color: Colors.red, size: 16),
-                          const SizedBox(width: 4),
-                          Text('Erros: ${_autoLocationService.errorCount}'),
-                        ],
-                      ),
-                      if (_autoLocationService.lastSentTime != null) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          'Último envio: ${_formatDateTime(_autoLocationService.lastSentTime!)}',
-                          style: const TextStyle(fontSize: 12),
-                        ),
+                        
+                        
+                        
                       ],
-                    ],
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _toggleAutoLocation,
-                        icon: Icon(_autoLocationService.isRunning ? Icons.pause : Icons.play_arrow),
-                        label: Text(_autoLocationService.isRunning ? 'Pausar Serviço' : 'Iniciar Serviço'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _autoLocationService.isRunning ? Colors.red : Colors.green,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                        ),
-                      ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
 
             const SizedBox(height: 16),
-
-            // Card do Serviço de Background
-            Card(
-              color: _isBackgroundServiceRunning ? Colors.blue.shade50 : Colors.grey.shade50,
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          _isBackgroundServiceRunning ? Icons.sync : Icons.sync_disabled,
-                          color: _isBackgroundServiceRunning ? Colors.blue : Colors.grey,
-                          size: 24,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Serviço de Background',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              color: _isBackgroundServiceRunning ? Colors.blue.shade700 : Colors.grey.shade700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _isBackgroundServiceRunning 
-                        ? 'Enviando localização a cada $_backgroundServiceInterval segundos (mesmo com app fechado)'
-                        : 'Serviço parado',
-                      style: TextStyle(
-                        color: _isBackgroundServiceRunning ? Colors.blue.shade600 : Colors.grey.shade600,
-                      ),
-                    ),
-                    if (_isBackgroundServiceRunning) ...[
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Icon(Icons.info, color: Colors.blue, size: 16),
-                          const SizedBox(width: 4),
-                          const Text('Funciona mesmo com app fechado'),
-                        ],
-                      ),
-                    ],
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: _isLoading ? null : _toggleBackgroundService,
-                            icon: Icon(_isBackgroundServiceRunning ? Icons.stop : Icons.play_arrow),
-                            label: Text(_isBackgroundServiceRunning ? 'Parar Serviço' : 'Iniciar Serviço'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _isBackgroundServiceRunning ? Colors.red : Colors.blue,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        OutlinedButton.icon(
-                          onPressed: _isLoading ? null : _updateBackgroundServiceInterval,
-                          icon: const Icon(Icons.timer),
-                          label: const Text('Intervalo'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // Botões de Ação Manual
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: (_isLoading || _autoLocationService.isRunning) ? null : _sendLocation,
-                    icon: _isLoading 
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.location_on),
-                    label: Text(_isLoading ? 'Enviando...' : 'Enviar Localização'),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _isLoading ? null : _updateStatus,
-                    icon: _isLoading 
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.update),
-                    label: Text(_isLoading ? 'Atualizando...' : 'Atualizar Status'),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 24),
 
             // Última Localização
             if (_lastLocation != null) ...[
@@ -667,9 +1003,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         return const Text('• Servidor: Carregando...');
                       },
                     ),
-                    const Text('• Endpoint: /api/v1/driver-locations/'),
-                    const Text('• Permite envio de dados sem autenticação'),
-                    const Text('• Cria usuário anônimo automaticamente'),
+                    const Text('• Endpoint: /api/drivers/send_location/'),
+                    const Text('• CPF obrigatório e deve estar cadastrado'),
+                    const Text('• Motorista deve existir previamente'),
+                    const Text('• Iniciar Viagem → Cria viagem + inicia rastreamento'),
+                    const Text('• Parar Viagem → Para rastreamento + finaliza viagem'),
                   ],
                 ),
               ),

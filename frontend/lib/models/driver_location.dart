@@ -6,8 +6,11 @@ part 'driver_location.g.dart';
 class DriverLocation {
   final int? id;
   final int? driver;
+  final String? cpf; // CPF do motorista
   @JsonKey(name: 'driver_name')
   final String? driverName;
+  @JsonKey(name: 'driver_cpf')
+  final String? driverCpf; // CPF do motorista (resposta da API)
   @JsonKey(name: 'driver_username')
   final String? driverUsername;
   final double latitude;
@@ -34,7 +37,9 @@ class DriverLocation {
   DriverLocation({
     this.id,
     this.driver,
+    this.cpf,
     this.driverName,
+    this.driverCpf,
     this.driverUsername,
     required this.latitude,
     required this.longitude,
@@ -60,17 +65,12 @@ class DriverLocation {
   // Método para criar dados de envio (sem campos de resposta)
   Map<String, dynamic> toCreateJson() {
     return {
+      'cpf': cpf, // CPF é obrigatório para envio
       'latitude': latitude,
       'longitude': longitude,
       'accuracy': accuracy,
       'speed': speed,
-      'heading': heading,
-      'altitude': altitude,
-      'status': status,
       'battery_level': batteryLevel,
-      'is_gps_enabled': isGpsEnabled,
-      'device_id': deviceId,
-      'app_version': appVersion,
     };
   }
 }
