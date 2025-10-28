@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:developer' as developer;
 import 'package:geolocator/geolocator.dart';
 
 class LocationService {
@@ -31,7 +32,7 @@ class LocationService {
       // Verifica se o serviço de localização está habilitado
       bool serviceEnabled = await isLocationServiceEnabled();
       if (!serviceEnabled) {
-        print('Serviço de localização desabilitado');
+        developer.log('Serviço de localização desabilitado');
         return null;
       }
 
@@ -40,13 +41,13 @@ class LocationService {
       if (permission == LocationPermission.denied) {
         permission = await requestPermission();
         if (permission == LocationPermission.denied) {
-          print('Permissão de localização negada');
+          developer.log('Permissão de localização negada');
           return null;
         }
       }
 
       if (permission == LocationPermission.deniedForever) {
-        print('Permissão de localização negada permanentemente');
+        developer.log('Permissão de localização negada permanentemente');
         return null;
       }
 
@@ -65,7 +66,7 @@ class LocationService {
 
       return position;
     } catch (e) {
-      print('Erro ao obter localização: $e');
+      developer.log('Erro ao obter localização: $e');
       return null;
     }
   }

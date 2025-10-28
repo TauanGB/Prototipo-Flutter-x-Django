@@ -1,16 +1,21 @@
-import '../services/config_service.dart';
+import '../models/api_config.dart';
 
+/// Configurações do Sistema EG3 - App para Motoristas
+/// 
+/// Este aplicativo é exclusivamente para dispositivos móveis:
+/// - Android (API 21+)
+/// - iOS (iOS 12.0+)
 class AppConfig {
-  // URL base da API do backend Django - agora obtida dinamicamente
-  static Future<String> get apiBaseUrl async {
-    return await ConfigService.getApiBaseUrl();
-  }
+  // URL base da API do backend Django - hard-coded
+  static String get apiBaseUrl => ApiConfig.baseUrl;
 
-  
-  
-  // Configurações do app
+  // Configurações do app mobile
   static const String appVersion = '1.0.0';
-  static const String appName = 'App Motorista';
+  static const String appName = 'Sistema EG3 - Motoristas';
+  static const String appDescription = 'App para Motoristas (Android e iOS)';
+  
+  // Plataformas suportadas
+  static const List<String> supportedPlatforms = ['android', 'ios'];
   
   // Status disponíveis para motoristas
   static const List<String> driverStatuses = [
@@ -30,10 +35,10 @@ class AppConfig {
     'break': 'Em Pausa',
   };
   
-  // Configurações de UI
+  // Configurações de UI mobile
   static const Duration snackBarDuration = Duration(seconds: 3);
   
-  // Configurações do serviço de background
+  // Configurações do serviço de background mobile
   static const int defaultBackgroundInterval = 30; // segundos
   static const int minBackgroundInterval = 15; // segundos
   static const int maxBackgroundInterval = 300; // 5 minutos

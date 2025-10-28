@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer';
 import 'dart:ui';
 import 'package:flutter_background_service/flutter_background_service.dart';
@@ -15,10 +16,17 @@ class BackgroundLocationServiceAndroid {
 
   /// Inicia o serviço de background
   static Future<void> startService() async {
-    final service = FlutterBackgroundService();
-    final isRunning = await service.isRunning();
-    
-    if (!isRunning) {
+    try {
+      final service = FlutterBackgroundService();
+      final isRunning = await service.isRunning();
+      
+      if (!isRunning) {
+        service.startService();
+        await _saveServiceState(true);
+      }
+    } catch (e) {
+      log('Erro ao verificar status do serviço, iniciando diretamente: $e');
+      final service = FlutterBackgroundService();
       service.startService();
       await _saveServiceState(true);
     }
@@ -26,10 +34,18 @@ class BackgroundLocationServiceAndroid {
   
   /// Para o serviço de background
   static Future<void> stopService() async {
-    final service = FlutterBackgroundService();
-    final isRunning = await service.isRunning();
-    
-    if (isRunning) {
+    try {
+      final service = FlutterBackgroundService();
+      final isRunning = await service.isRunning();
+      
+      if (isRunning) {
+        service.invoke('stop');
+        await _saveServiceState(false);
+      }
+    } catch (e) {
+      // Se houver erro ao verificar se está rodando, apenas para o serviço
+      log('Erro ao verificar status do serviço, parando diretamente: $e');
+      final service = FlutterBackgroundService();
       service.invoke('stop');
       await _saveServiceState(false);
     }
@@ -37,8 +53,15 @@ class BackgroundLocationServiceAndroid {
   
   /// Verifica se o serviço está rodando
   static Future<bool> isServiceRunning() async {
-    final service = FlutterBackgroundService();
-    return service.isRunning();
+    try {
+      final service = FlutterBackgroundService();
+      return await service.isRunning();
+    } catch (e) {
+      log('Erro ao verificar status do serviço: $e');
+      // Fallback: verificar no SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_isRunningKey) ?? false;
+    }
   }
   
   /// Atualiza o intervalo do serviço
@@ -94,6 +117,33 @@ class BackgroundLocationServiceAndroid {
   static Future<bool> hasActiveTrip() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool('has_active_trip') ?? false;
+  }
+  
+  /// Salva dados da viagem ativa
+  static Future<void> saveActiveTripData(Map<String, dynamic> tripData) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('active_trip_data', json.encode(tripData));
+  }
+  
+  /// Restaura dados da viagem ativa
+  static Future<Map<String, dynamic>?> restoreActiveTripData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final tripDataJson = prefs.getString('active_trip_data');
+    if (tripDataJson != null) {
+      try {
+        return json.decode(tripDataJson);
+      } catch (e) {
+        log('Erro ao decodificar dados da viagem: $e', name: 'BackgroundServiceAndroid');
+        return null;
+      }
+    }
+    return null;
+  }
+  
+  /// Limpa dados da viagem ativa
+  static Future<void> clearActiveTripData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('active_trip_data');
   }
 }
 
@@ -170,19 +220,25 @@ void onStart(ServiceInstance service) async {
       // Envia para a API
       final result = await ApiService.sendDriverLocation(location);
       
-      if (result != null) {
-        successCount++;
-        log('Localização enviada com sucesso. Resposta do servidor: ${result.toJson()}', name: 'BackgroundService');
-        
-        // Log do sucesso (notificação será atualizada via logs)
-        log('✅ Localização enviada com sucesso ($successCount total)', name: 'BackgroundService');
-      } else {
-        errorCount++;
-        log('Erro ao enviar localização. A API retornou nulo.', name: 'BackgroundService');
-        
-        // Log do erro
-        log('❌ Erro ao enviar localização ($errorCount erros total)', name: 'BackgroundService');
-      }
+        if (result['success']) {
+          successCount++;
+          log('Localização enviada com sucesso. Resposta do servidor: ${result['data']}', name: 'BackgroundService');
+          
+          // Log do sucesso (notificação será atualizada via logs)
+          log('✅ Localização enviada com sucesso ($successCount total)', name: 'BackgroundService');
+        } else {
+          errorCount++;
+          log('❌ ERRO CRÍTICO: Falha ao enviar localização para API', name: 'BackgroundService');
+          log('❌ Erro ao enviar localização ($errorCount erros total)', name: 'BackgroundService');
+          log('❌ Detalhes do erro: ${result['error']}', name: 'BackgroundService');
+          log('❌ Verifique conexão com internet e configurações da API', name: 'BackgroundService');
+          
+          // Se muitos erros consecutivos, para o serviço
+          if (errorCount >= 5) {
+            log('🛑 Muitos erros consecutivos, parando serviço de background', name: 'BackgroundService');
+            await BackgroundLocationServiceAndroid.stopService();
+          }
+        }
     } catch (e, stackTrace) {
       errorCount++;
       log('Erro crítico ao obter/enviar localização', name: 'BackgroundService', error: e, stackTrace: stackTrace);

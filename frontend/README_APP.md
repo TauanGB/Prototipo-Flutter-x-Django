@@ -1,71 +1,103 @@
-# App Motorista - Frontend Flutter
+# Sistema EG3 - App para Motoristas (Mobile)
 
-Este é um aplicativo Flutter simples que permite enviar dados de localização de motoristas para a API do backend Django.
+## 📱 Plataformas Suportadas
 
-## Funcionalidades
+**Este aplicativo é exclusivamente para dispositivos móveis:**
+- ✅ **Android** (API 21+)
+- ✅ **iOS** (iOS 12.0+)
+- ❌ ~~Web~~ (não suportado)
+- ❌ ~~Windows~~ (não suportado)
+- ❌ ~~macOS~~ (não suportado)
+- ❌ ~~Linux~~ (não suportado)
 
-- **Envio de Localização**: Envia dados de GPS do dispositivo para a API
-- **Atualização de Status**: Permite alterar o status do motorista (online, offline, dirigindo, etc.)
-- **Informações de Bateria**: Opcionalmente envia o nível da bateria
-- **Visualização de Dados**: Mostra a última localização enviada com sucesso
-- **Integração com API**: Comunica-se com o backend Django através de requisições HTTP
+## 🚀 Funcionalidades Principais
 
-## Como Usar
+- **Gestão de Rotas**: Visualização e execução de rotas de entrega
+- **Rastreamento GPS**: Localização em tempo real com serviço em background
+- **Status de Fretes**: Controle de status por tipo de serviço:
+  - **TRANSPORTE**: Aguardando Carga → Em Trânsito → Descarregando → Finalizado
+  - **MUNCK_CARGA**: Carregamento Iniciado → Carregamento Concluído
+  - **MUNCK_DESCARGA**: Descarregamento Iniciado → Descarregamento Concluído
+- **Interface Simplificada**: Dashboard integrado sem telas intermediárias
+- **Sincronização**: Integração com sistema backend Django
 
-### 1. Configuração Inicial
+## 🛠️ Tecnologias Mobile
 
-1. Certifique-se de que o backend Django está rodando em `http://127.0.0.1:8000`
-2. Execute o aplicativo Flutter:
-   ```bash
-   flutter run
-   ```
+- **Flutter**: Framework multiplataforma (apenas mobile)
+- **Dart**: Linguagem de programação
+- **Geolocator**: Serviços de localização GPS
+- **Background Service**: Rastreamento em background
+- **HTTP**: Comunicação com API REST
+- **Shared Preferences**: Armazenamento local de dados
 
-### 2. Permissões
+## 📋 Pré-requisitos Mobile
 
-Na primeira execução, o app solicitará permissões de localização:
-- **Permissão de Localização**: Necessária para obter coordenadas GPS
-- **Serviços de Localização**: Deve estar habilitado no dispositivo
+### Android
+- Android Studio
+- Android SDK (API 21+)
+- Dispositivo Android ou Emulador
+- Permissões de localização
 
-### 3. Envio de Dados
+### iOS
+- Xcode
+- iOS Simulator ou dispositivo iOS
+- macOS (para desenvolvimento iOS)
+- Permissões de localização
 
-1. **Definir Status**: Selecione o status do motorista no dropdown
-2. **Nível de Bateria** (opcional): Digite o percentual da bateria
-3. **Enviar Localização**: Toque no botão "Enviar Localização" para:
-   - Obter coordenadas GPS atuais
-   - Enviar dados para a API
-   - Exibir resultado na tela
+## 🚀 Como Executar
 
-### 4. Atualização de Status
-
-- Use o botão "Atualizar Status" para alterar apenas o status sem enviar nova localização
-- Útil quando o motorista muda de status (ex: online → dirigindo)
-
-## Endpoints da API Utilizados
-
-- `POST /api/v1/driver-locations/send_location/` - Envia dados de localização
-- `POST /api/v1/driver-locations/update_status/` - Atualiza status do motorista
-- `GET /api/v1/driver-locations/current_location/` - Obtém localização atual
-- `GET /api/v1/driver-locations/location_history/` - Histórico de localizações
-- `GET /api/v1/driver-locations/online_drivers/` - Motoristas online
-
-## Estrutura do Projeto
-
-```
-lib/
-├── main.dart                 # Ponto de entrada do app
-├── models/
-│   ├── driver_location.dart  # Modelo de dados
-│   └── driver_location.g.dart # Serialização JSON (gerado)
-├── services/
-│   ├── api_service.dart      # Comunicação com API
-│   └── location_service.dart # Serviços de localização
-└── screens/
-    └── home_screen.dart      # Tela principal
+### Android
+```bash
+flutter run --debug
+# ou especificamente para Android
+flutter run -d android
 ```
 
-## Dados Enviados
+### iOS
+```bash
+flutter run --debug
+# ou especificamente para iOS
+flutter run -d ios
+```
 
-O aplicativo envia os seguintes dados para a API:
+## 📦 Build para Produção Mobile
+
+### Android APK
+```bash
+flutter build apk --release
+```
+
+### iOS IPA
+```bash
+flutter build ios --release
+```
+
+## 🔧 Configuração Mobile
+
+1. **Configurar CPF**: Configure o CPF do motorista no app
+2. **Permissões**: Permita acesso à localização GPS
+3. **Conexão**: Conecte-se à internet para sincronização
+4. **Background**: Permita execução em background para rastreamento
+
+## 📱 Recursos Móveis Utilizados
+
+- **GPS/Localização**: Rastreamento em tempo real
+- **Background Service**: Continua funcionando com app minimizado
+- **Notificações**: Alertas de status e atualizações
+- **Armazenamento Local**: Cache de dados offline
+- **Câmera**: Para fotos de evidência (futuro)
+- **Sensores**: Acelerômetro para detecção de movimento
+
+## 🎯 Fluxo de Uso Mobile
+
+1. **Login**: Motorista faz login com CPF
+2. **Dashboard**: Visualiza fretes ativos e rotas
+3. **Iniciar Viagem**: Busca rota ativa automaticamente
+4. **Execução**: Atualiza status de cada frete conforme executa
+5. **Rastreamento**: GPS ativo durante toda a viagem
+6. **Finalização**: Completa rota e para rastreamento
+
+## 📊 Dados Enviados (Mobile)
 
 ```json
 {
@@ -75,48 +107,39 @@ O aplicativo envia os seguintes dados para a API:
   "speed": 25.0,
   "heading": 180.0,
   "altitude": 760.0,
-  "status": "online",
+  "status": "EM_TRANSITO",
   "battery_level": 85,
   "is_gps_enabled": true,
-  "device_id": "flutter_app_1234567890",
-  "app_version": "1.0.0"
+  "device_id": "android_1234567890",
+  "app_version": "1.0.0",
+  "platform": "android"
 }
 ```
 
-## Tratamento de Erros
+## 🔒 Segurança Mobile
 
-- **Sem permissão de localização**: Solicita permissão automaticamente
-- **GPS desabilitado**: Exibe mensagem de erro
-- **Falha na API**: Mostra mensagem de erro com detalhes
-- **Sem conexão**: Trata erros de rede graciosamente
+- **Autenticação**: Token JWT para segurança
+- **Criptografia**: Dados sensíveis criptografados
+- **Permissões**: Controle granular de acesso
+- **Background**: Execução segura em background
 
-## Status Disponíveis
+## ⚠️ Importante
 
-- **online**: Motorista disponível
-- **offline**: Motorista indisponível
-- **driving**: Motorista dirigindo
-- **stopped**: Motorista parado
-- **break**: Motorista em pausa
+Este aplicativo foi desenvolvido especificamente para dispositivos móveis Android e iOS. Não há suporte para outras plataformas como web, desktop ou outros sistemas operacionais.
 
-## Observações
-
-- O backend cria automaticamente um usuário anônimo para dados não autenticados
-- As localizações são armazenadas no banco de dados SQLite do Django
-- O app funciona sem necessidade de login/autenticação
-- Dados são enviados em tempo real para a API
-
-## Troubleshooting
-
-### Erro de Conexão
-- Verifique se o backend está rodando
-- Confirme a URL da API em `api_service.dart`
-- Teste a conectividade de rede
+## 🐛 Troubleshooting Mobile
 
 ### Erro de Localização
 - Verifique permissões de localização
 - Confirme se o GPS está habilitado
 - Teste em ambiente externo para melhor precisão
 
-### Erro de Compilação
-- Execute `flutter pub get` para instalar dependências
-- Verifique se todas as dependências estão corretas no `pubspec.yaml`
+### Erro de Background
+- Permita execução em background
+- Desative otimização de bateria para o app
+- Verifique configurações de energia
+
+### Erro de Conexão
+- Verifique conectividade móvel/WiFi
+- Confirme URL da API em produção
+- Teste em diferentes redes

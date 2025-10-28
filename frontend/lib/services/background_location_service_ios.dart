@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -214,13 +215,13 @@ class BackgroundLocationServiceIOS {
 
       // Envia para a API
       final result = await ApiService.sendDriverLocation(location);
-      
-      if (result != null) {
+
+      if (result['success']) {
         _successCount++;
         _lastSentTime = DateTime.now();
-        log('Localização enviada com sucesso (iOS). Resposta: ${result.toJson()}', name: 'BackgroundServiceIOS');
+        log('Localização enviada com sucesso (iOS). Resposta: ${result['data']}', name: 'BackgroundServiceIOS');
         await _saveLastLocation(position);
-        
+
         // Log de sucesso (apenas a cada 5 envios para não spammar)
         if (_successCount % 5 == 0) {
              log(
@@ -230,13 +231,22 @@ class BackgroundLocationServiceIOS {
         }
       } else {
         _errorCount++;
-        log('Erro ao enviar localização iOS. A API retornou nulo.', name: 'BackgroundServiceIOS');
+        log('❌ ERRO CRÍTICO: Falha ao enviar localização para API (iOS)', name: 'BackgroundServiceIOS');
+        log('❌ Erro ao enviar localização ($_errorCount erros total)', name: 'BackgroundServiceIOS');
+        log('❌ Detalhes do erro: ${result['error']}', name: 'BackgroundServiceIOS');
+        log('❌ Verifique conexão com internet e configurações da API', name: 'BackgroundServiceIOS');
+        
+        // Se muitos erros consecutivos, para o serviço
+        if (_errorCount >= 5) {
+          log('🛑 Muitos erros consecutivos, parando serviço de background iOS', name: 'BackgroundServiceIOS');
+          await stopService();
+        }
         
         // Log de erro
-         log(
-           'Erro no rastreamento - Falha ao enviar localização • $_errorCount erros',
-           name: 'BackgroundServiceIOS'
-         );
+        log(
+          'Erro no rastreamento - Falha ao enviar localização • $_errorCount erros',
+          name: 'BackgroundServiceIOS'
+        );
       }
     } catch (e, stackTrace) {
       log('Erro crítico ao enviar localização iOS', name: 'BackgroundServiceIOS', error: e, stackTrace: stackTrace);
@@ -321,6 +331,33 @@ class BackgroundLocationServiceIOS {
   static Future<bool> hasActiveTrip() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool('has_active_trip_ios') ?? false;
+  }
+  
+  /// Salva dados da viagem ativa
+  static Future<void> saveActiveTripData(Map<String, dynamic> tripData) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('active_trip_data_ios', json.encode(tripData));
+  }
+  
+  /// Restaura dados da viagem ativa
+  static Future<Map<String, dynamic>?> restoreActiveTripData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final tripDataJson = prefs.getString('active_trip_data_ios');
+    if (tripDataJson != null) {
+      try {
+        return json.decode(tripDataJson);
+      } catch (e) {
+        log('Erro ao decodificar dados da viagem iOS: $e', name: 'BackgroundServiceIOS');
+        return null;
+      }
+    }
+    return null;
+  }
+  
+  /// Limpa dados da viagem ativa
+  static Future<void> clearActiveTripData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('active_trip_data_ios');
   }
   
   /// Notificações removidas para compatibilidade com Windows

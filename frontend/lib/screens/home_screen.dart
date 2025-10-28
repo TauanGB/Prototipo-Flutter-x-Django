@@ -1,16 +1,27 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:geolocator/geolocator.dart';
 import '../models/driver_location.dart';
 import '../models/driver_trip.dart';
-import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../services/background_location_service.dart';
+import '../services/storage_service.dart';
 import '../config/app_config.dart';
-import '../utils/cpf_validator.dart';
-import 'config_screen.dart';
+import '../models/frete_ativo.dart';
+import '../services/frete_service.dart';
+import '../services/rota_execution_service.dart';
+import '../models/rota.dart';
+import '../models/frete_rota.dart';
+import '../widgets/frete_action_button.dart';
 import 'cpf_config_screen.dart';
+import 'login_screen.dart';
 
+/// Sistema EG3 - App para Motoristas (Mobile)
+/// 
+/// Este aplicativo é exclusivamente para dispositivos móveis:
+/// - Android (API 21+)
+/// - iOS (iOS 12.0+)
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -22,16 +33,16 @@ class _HomeScreenState extends State<HomeScreen> {
   DriverLocation? _lastLocation;
   DriverTrip? _activeTrip;
   bool _isLoading = false;
-  String _status = 'online';
-  double? _batteryLevel;
   String _cpf = '';
   bool _hasCpfConfigured = false;
-  final List<String> _statusOptions = AppConfig.driverStatuses;
-  final TextEditingController _batteryController = TextEditingController();
+  List<FreteAtivo> _fretesAtivos = [];
+  bool _loadingFretes = false;
+  bool _hasActiveRota = false;
+  Rota? _rotaAtiva;
+  bool _expandedFretes = false;
   
   // Variáveis para o serviço de background
   bool _isBackgroundServiceRunning = false;
-  int _backgroundServiceInterval = AppConfig.defaultBackgroundInterval;
   Timer? _tripValidationTimer;
 
   @override
@@ -40,370 +51,270 @@ class _HomeScreenState extends State<HomeScreen> {
     _checkLocationPermission();
     _loadBackgroundServiceState();
     _loadSavedCpf();
-    _validateTripRequirement();
+    _restoreActiveTrip();
+    _loadFretesAtivos();
+    _checkActiveRota();
   }
 
   @override
   void dispose() {
-    _batteryController.dispose();
     _tripValidationTimer?.cancel();
     super.dispose();
   }
 
   Future<void> _checkLocationPermission() async {
-    // Verifica permissões usando o sistema padrão
-    bool hasPermission = await LocationService.hasPermission();
-    if (!hasPermission) {
+    try {
+      final permission = await LocationService.checkPermission();
+      if (permission != LocationPermission.always && permission != LocationPermission.whileInUse) {
       await LocationService.requestPermission();
+      }
+    } catch (e) {
+      developer.log('Erro ao verificar permissão de localização: $e');
     }
   }
 
   Future<void> _loadBackgroundServiceState() async {
+    try {
     final isRunning = await BackgroundLocationService.isServiceRunning();
-    final interval = await BackgroundLocationService.getCurrentInterval();
+      
     setState(() {
       _isBackgroundServiceRunning = isRunning;
-      _backgroundServiceInterval = interval;
-    });
-    
-    // Valida se há viagem ativa quando o serviço está rodando
-    if (isRunning && _activeTrip == null) {
-      await _validateTripRequirement();
+      });
+    } catch (e) {
+      developer.log('Erro ao carregar estado do serviço de background: $e');
     }
   }
 
   Future<void> _loadSavedCpf() async {
-    final savedCpf = await BackgroundLocationService.getSavedCpf();
+    try {
+      final cpf = await StorageService.getCpf();
     setState(() {
-      _cpf = savedCpf;
-      _hasCpfConfigured = savedCpf.isNotEmpty;
+        _cpf = cpf ?? '';
+        _hasCpfConfigured = cpf != null && cpf.isNotEmpty;
     });
+    } catch (e) {
+      developer.log('Erro ao carregar CPF salvo: $e');
+    }
   }
 
-  Future<void> _validateTripRequirement() async {
-    // Verifica se o rastreamento está ativo mas sem viagem associada
-    if (_isBackgroundServiceRunning && _activeTrip == null) {
-      // Para o rastreamento automaticamente
-      await BackgroundLocationService.stopService();
-      setState(() {
-        _isBackgroundServiceRunning = false;
-      });
-      
-      // Para o timer de validação
-      _tripValidationTimer?.cancel();
-      
-      // Mostra aviso ao usuário
-      if (mounted) {
-        _showSnackBar('Rastreamento encerrado: viagem é obrigatória', isError: true);
+  Future<void> _restoreActiveTrip() async {
+    try {
+      // Verificar se há viagem ativa no storage
+      final hasActiveTrip = await StorageService.getString('active_trip') != null;
+      if (hasActiveTrip) {
+        _startTripValidationTimer();
       }
+    } catch (e) {
+      developer.log('Erro ao restaurar viagem ativa: $e');
+    }
+  }
+
+  Future<void> _loadFretesAtivos() async {
+    if (!_hasCpfConfigured) return;
+    
+    setState(() {
+      _loadingFretes = true;
+    });
+
+    try {
+      final fretes = await FreteService.getFretesAtivos();
+          setState(() {
+        _fretesAtivos = fretes;
+        _loadingFretes = false;
+          });
+      developer.log('✅ ${fretes.length} fretes carregados no dashboard');
+        } catch (e) {
+      setState(() {
+        _loadingFretes = false;
+      });
+      developer.log('❌ Erro ao carregar fretes: $e');
+      _showSnackBar('Erro ao carregar fretes: $e', true);
+    }
+  }
+
+  Future<void> _checkActiveRota() async {
+    try {
+      final rotaAtiva = await RotaExecutionService.getRotaAtiva();
+      setState(() {
+        _rotaAtiva = rotaAtiva;
+        _hasActiveRota = rotaAtiva != null;
+      });
+    } catch (e) {
+      developer.log('Erro ao verificar rota ativa: $e');
     }
   }
 
   void _startTripValidationTimer() {
     _tripValidationTimer?.cancel();
     _tripValidationTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      if (_isBackgroundServiceRunning && _activeTrip == null) {
-        _validateTripRequirement();
+      if (_activeTrip != null) {
+        _validateActiveTrip();
+      } else {
+        timer.cancel();
       }
     });
+  }
+
+  Future<void> _validateActiveTrip() async {
+    try {
+      final hasActiveTrip = await StorageService.getString('active_trip') != null;
+      if (!hasActiveTrip) {
+        _tripValidationTimer?.cancel();
+      }
+    } catch (e) {
+      developer.log('Erro ao validar viagem ativa: $e');
+    }
   }
 
   Future<void> _startTripAndTracking() async {
+    if (!_hasCpfConfigured) {
+      _showCpfRequiredDialog();
+        return;
+      }
+
     setState(() {
       _isLoading = true;
     });
 
     try {
-      // Verifica CPF antes de iniciar
-      if (!_hasCpfConfigured) {
-        _showCpfRequiredDialog();
-        return;
+      // Buscar rota ativa automaticamente
+      final rotaAtiva = await RotaExecutionService.buscarRotaAtivaAutomatica();
+      
+      if (rotaAtiva == null) {
+        _showNoActiveRotaDialog();
+            return;
       }
       
-      // Verifica permissões antes de iniciar
-      bool hasPermission = await LocationService.hasPermission();
-      if (!hasPermission) {
-        await LocationService.requestPermission();
-        hasPermission = await LocationService.hasPermission();
-        if (!hasPermission) {
-          _showSnackBar('Permissões de localização são necessárias para iniciar viagem', isError: true);
-          return;
-        }
-      }
-
-      // Obtém a localização atual para iniciar a viagem
-      final position = await LocationService.getCurrentPosition();
-      if (position == null) {
-        _showSnackBar('Não foi possível obter a localização para iniciar viagem', isError: true);
-        return;
-      }
-
-      // 1. Inicia a viagem na API
-      final trip = await ApiService.startTrip(
-        CpfValidator.cleanCpf(_cpf),
-        position.latitude,
-        position.longitude,
-      );
+      // Iniciar viagem com rota
+      await RotaExecutionService.iniciarViagemComRota();
       
-      if (trip == null) {
-        _showSnackBar('Erro ao iniciar viagem na API', isError: true);
-        return;
-      }
-
-      // 2. Salva o CPF para uso no background service
-      await BackgroundLocationService.saveCpf(CpfValidator.cleanCpf(_cpf));
-      
-      // 3. Inicia o serviço de rastreamento
-      await BackgroundLocationService.startService();
-      
-      // 4. Atualiza estado local
       setState(() {
-        _activeTrip = trip;
+        _rotaAtiva = rotaAtiva;
+        _hasActiveRota = true;
+        _expandedFretes = true;
       });
-      
-      // 5. Salva status da viagem ativa
-      await BackgroundLocationService.setActiveTripStatus(true);
-      
-      // 6. Inicia timer de validação
-      _startTripValidationTimer();
-      
-      _showSnackBar('Viagem iniciada e rastreamento ativo!');
+
+      _showSnackBar('Viagem iniciada com sucesso!', false);
       await _loadBackgroundServiceState();
-    } catch (e) {
-      _showSnackBar('Erro ao iniciar viagem: $e', isError: true);
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
-    }
-  }
-
-  Future<void> _stopTripAndTracking() async {
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      // 1. Para o serviço de rastreamento
-      await BackgroundLocationService.stopService();
       
-      // 2. Se há viagem ativa, finaliza ela
-      if (_activeTrip != null) {
-        final position = await LocationService.getCurrentPosition();
-        if (position != null) {
-          await ApiService.endTrip(
-            CpfValidator.cleanCpf(_cpf),
-            position.latitude,
-            position.longitude,
-          );
-        }
-      }
-      
-      // 3. Atualiza estado local
-      setState(() {
-        _activeTrip = null;
-      });
-      
-      // 4. Salva status da viagem ativa
-      await BackgroundLocationService.setActiveTripStatus(false);
-      
-      // 5. Para o timer de validação
-      _tripValidationTimer?.cancel();
-      
-      _showSnackBar('Viagem finalizada e rastreamento parado!');
-      await _loadBackgroundServiceState();
-    } catch (e) {
-      _showSnackBar('Erro ao parar viagem: $e', isError: true);
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
-    }
-  }
-
-  Future<void> _updateBackgroundServiceInterval() async {
-    final newInterval = await _showIntervalDialog();
-    if (newInterval != null && newInterval != _backgroundServiceInterval) {
-      setState(() {
-        _isLoading = true;
-      });
-
-      try {
-        await BackgroundLocationService.updateInterval(newInterval);
-        setState(() {
-          _backgroundServiceInterval = newInterval;
-        });
-        _showSnackBar('Intervalo atualizado para ${newInterval}s');
       } catch (e) {
-        _showSnackBar('Erro ao atualizar intervalo: $e', isError: true);
+      developer.log('Erro ao iniciar viagem: $e');
+      _showSnackBar('Erro ao iniciar viagem: $e', true);
       } finally {
         setState(() {
           _isLoading = false;
         });
-      }
     }
   }
 
-  Future<int?> _showIntervalDialog() async {
-    final controller = TextEditingController(text: _backgroundServiceInterval.toString());
-    
-    return showDialog<int>(
+  void _showNoActiveRotaDialog() {
+    showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Configurar Intervalo'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Digite o intervalo em segundos (mínimo: ${AppConfig.minBackgroundInterval}s):'),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(
-                labelText: 'Intervalo (segundos)',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
+        title: const Text('Nenhuma Rota Ativa'),
+        content: const Text(
+          'Não foi encontrada nenhuma rota ativa para este motorista.\n\n'
+          'Entre em contato com o gestor para receber uma nova rota.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancelar'),
-          ),
-          TextButton(
-            onPressed: () {
-              final value = int.tryParse(controller.text);
-              if (value != null && value >= AppConfig.minBackgroundInterval && value <= AppConfig.maxBackgroundInterval) {
-                Navigator.of(context).pop(value);
-              } else {
-                _showSnackBar('Intervalo deve estar entre ${AppConfig.minBackgroundInterval} e ${AppConfig.maxBackgroundInterval} segundos', isError: true);
-              }
-            },
-            child: const Text('Salvar'),
+            child: const Text('OK'),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _sendLocation() async {
-    setState(() {
-      _isLoading = true;
-    });
-
+  Future<void> _atualizarStatusFrete(int freteId) async {
     try {
-      // Verifica CPF antes de enviar
-      if (!_hasCpfConfigured) {
-        _showCpfRequiredDialog();
-        return;
-      }
-
-      // Obtém a localização atual
-      final position = await LocationService.getCurrentPosition();
-      if (position == null) {
-        _showSnackBar('Não foi possível obter a localização', isError: true);
-        return;
-      }
-
-      // Cria o objeto de localização
-      final location = DriverLocation(
-        cpf: CpfValidator.cleanCpf(_cpf),
-        latitude: position.latitude,
-        longitude: position.longitude,
-        accuracy: position.accuracy,
-        speed: position.speed,
-        batteryLevel: _batteryLevel?.round(),
-      );
-
-      // Envia para a API
-      final result = await ApiService.sendDriverLocation(location);
+      await RotaExecutionService.atualizarStatusFrete(freteId);
       
-      if (result != null) {
-        setState(() {
-          _lastLocation = result;
-        });
-        _showSnackBar('Localização enviada com sucesso!');
-      } else {
-        _showSnackBar('Erro ao enviar localização', isError: true);
-      }
+      // Buscar rota atualizada do servidor para refletir mudanças
+      await _recarregarRotaAtiva();
+      
+      _showSnackBar('Status atualizado com sucesso!', false);
     } catch (e) {
-      _showSnackBar('Erro: $e', isError: true);
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      developer.log('Erro ao atualizar status do frete: $e');
+      _showSnackBar('Erro ao atualizar status: $e', true);
     }
   }
 
+  Future<void> _recarregarRotaAtiva() async {
+    try {
+      // Buscar rota ativa atualizada do servidor
+      final rotaAtualizada = await RotaExecutionService.buscarRotaAtivaAutomatica();
+      if (rotaAtualizada != null) {
+        setState(() {
+          _rotaAtiva = rotaAtualizada;
+        });
+        developer.log('✅ Rota recarregada com status atualizados', name: 'HomeScreen');
+      }
+    } catch (e) {
+      developer.log('❌ Erro ao recarregar rota: $e', name: 'HomeScreen');
+    }
+  }
 
+  Future<void> _finalizarViagem() async {
+    if (_rotaAtiva == null) return;
 
-  Future<void> _showCpfRequiredDialog() async {
-    return showDialog<void>(
+    try {
+      await RotaExecutionService.finalizarRota(_rotaAtiva!.id);
+      
+        setState(() {
+        _rotaAtiva = null;
+        _hasActiveRota = false;
+        _expandedFretes = false;
+      });
+
+      _showSnackBar('Viagem finalizada com sucesso!', false);
+      await _loadBackgroundServiceState();
+      
+    } catch (e) {
+      developer.log('Erro ao finalizar viagem: $e');
+      _showSnackBar('Erro ao finalizar viagem: $e', true);
+    }
+  }
+
+  void _showCpfRequiredDialog() {
+    showDialog(
       context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Row(
-            children: [
-              Icon(Icons.warning, color: Colors.orange, size: 28),
-              const SizedBox(width: 8),
-              const Text('CPF Obrigatório'),
-            ],
-          ),
-          content: const Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Para usar o aplicativo, você precisa configurar seu CPF.',
-                style: TextStyle(fontSize: 16),
-              ),
-              SizedBox(height: 16),
-              Text('• O CPF deve estar cadastrado no sistema'),
-              Text('• Será validado automaticamente'),
-              Text('• Fica salvo para próximas sessões'),
-            ],
+      builder: (context) => AlertDialog(
+        title: const Text('CPF Necessário'),
+        content: const Text(
+          'É necessário configurar o CPF antes de iniciar uma viagem.\n\n'
+          'Deseja configurar agora?',
           ),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
+            onPressed: () => Navigator.of(context).pop(),
               child: const Text('Cancelar'),
             ),
-            ElevatedButton(
+          TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
                 _navigateToCpfConfig();
               },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Configurar CPF'),
-            ),
-          ],
-        );
-      },
+            child: const Text('Configurar'),
+          ),
+        ],
+      ),
     );
   }
 
-  Future<void> _navigateToCpfConfig() async {
-    final result = await Navigator.push<bool>(
+  void _navigateToCpfConfig() {
+    Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => const CpfConfigScreen()),
-    );
-    
-    if (result == true) {
-      // CPF foi configurado, recarrega os dados
-      await _loadSavedCpf();
-      _showSnackBar('CPF configurado com sucesso!');
-    }
+      MaterialPageRoute(
+        builder: (context) => const CpfConfigScreen(),
+      ),
+    ).then((_) {
+      _loadSavedCpf();
+      _loadFretesAtivos();
+    });
   }
 
-  void _showSnackBar(String message, {bool isError = false}) {
+  void _showSnackBar(String message, bool isError) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -413,622 +324,25 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('App Motorista'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const ConfigScreen()),
-              );
-            },
-            tooltip: 'Configurações da API',
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-                  // Card Principal - Rastreamento em Background
-                  Card(
-                    elevation: 8,
-                    color: _isBackgroundServiceRunning 
-                        ? Colors.green.shade50 
-                        : _hasCpfConfigured 
-                            ? Colors.grey.shade50 
-                            : Colors.orange.shade50,
-                    child: Padding(
-                      padding: const EdgeInsets.all(24.0),
-                      child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Header com ícone e título
-                    Row(
-                      children: [
-                        Icon(
-                          _isBackgroundServiceRunning ? Icons.my_location : Icons.location_off,
-                          color: _isBackgroundServiceRunning ? Colors.green : Colors.grey,
-                          size: 32,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                AppConfig.trackingServiceText,
-                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                  color: _isBackgroundServiceRunning ? Colors.green.shade700 : Colors.grey.shade700,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              Text(
-                                BackgroundLocationService.getImplementationInfo(),
-                                style: TextStyle(
-                                  color: _isBackgroundServiceRunning ? Colors.green.shade600 : Colors.grey.shade600,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    
-                            const SizedBox(height: 20),
-
-                            // Alerta de CPF não configurado
-                            if (!_hasCpfConfigured) ...[
-                              Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: Colors.orange.shade100,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.orange.shade300),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.warning, color: Colors.orange.shade700),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'CPF não configurado',
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.orange.shade700,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            'Configure seu CPF nas configurações avançadas para usar o aplicativo.',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: Colors.orange.shade600,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                            ],
-
-                            // Status e informações
-                            Container(
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: _isBackgroundServiceRunning 
-                                    ? Colors.green.shade100 
-                                    : _hasCpfConfigured 
-                                        ? Colors.grey.shade100 
-                                        : Colors.orange.shade100,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Column(
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                _isBackgroundServiceRunning ? Icons.play_circle_filled : Icons.pause_circle_filled,
-                                color: _isBackgroundServiceRunning ? Colors.green : Colors.grey,
-                                size: 20,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                _isBackgroundServiceRunning 
-                                  ? 'Rastreamento Ativo'
-                                  : 'Rastreamento Inativo',
-                                style: TextStyle(
-                                  color: _isBackgroundServiceRunning ? Colors.green.shade800 : Colors.grey.shade800,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                          if (_isBackgroundServiceRunning) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              'Enviando a cada $_backgroundServiceInterval segundos',
-                              style: TextStyle(
-                                color: Colors.green.shade700,
-                                fontSize: 12,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Icon(Icons.info, color: Colors.blue, size: 16),
-                                const SizedBox(width: 4),
-                                const Text('Funciona mesmo com app fechado'),
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    
-                    const SizedBox(height: 24),
-                    
-                            // Botão principal
-                            SizedBox(
-                              width: double.infinity,
-                              height: 56,
-                              child: ElevatedButton.icon(
-                                onPressed: (_isLoading || !_hasCpfConfigured) ? null : (_isBackgroundServiceRunning ? _stopTripAndTracking : _startTripAndTracking),
-                                icon: Icon(_isBackgroundServiceRunning ? Icons.stop : Icons.play_arrow, size: 24),
-                                label: Text(
-                                  !_hasCpfConfigured 
-                                      ? 'Configure CPF primeiro'
-                                      : _isBackgroundServiceRunning 
-                                          ? 'Parar Viagem' 
-                                          : 'Iniciar Viagem',
-                                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                                ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: !_hasCpfConfigured 
-                                      ? Colors.grey
-                                      : _isBackgroundServiceRunning 
-                                          ? Colors.red 
-                                          : Colors.green,
-                                  foregroundColor: Colors.white,
-                                  elevation: 4,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                              ),
-                            ),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-                            // Card de Status da Viagem e Rastreamento
-            if (_activeTrip != null || _isBackgroundServiceRunning) ...[
-              Card(
-                elevation: 4,
-                color: Colors.blue.shade50,
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.directions_car, color: Colors.blue.shade700),
-                          const SizedBox(width: 8),
-                          Text(
-                            _activeTrip != null ? 'Viagem Ativa' : 'Rastreamento Ativo',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue.shade700,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const Spacer(),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.green,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              'EM ANDAMENTO',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      if (_activeTrip != null) ...[
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Iniciada em:',
-                                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                                  ),
-                                  Text(
-                                    _activeTrip!.startedAt != null 
-                                        ? _formatDateTime(_activeTrip!.startedAt!)
-                                        : 'N/A',
-                                    style: TextStyle(fontWeight: FontWeight.w500),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Duração:',
-                                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                                  ),
-                                  Text(
-                                    _activeTrip!.formattedDuration,
-                                    style: TextStyle(fontWeight: FontWeight.w500),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.green.shade100,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(Icons.location_on, color: Colors.green.shade700, size: 16),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  'Localização sendo enviada automaticamente a cada $_backgroundServiceInterval segundos',
-                                  style: TextStyle(
-                                    color: Colors.green.shade700,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ] else ...[
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.red.shade100,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.red.shade300),
-                          ),
-                          child: Column(
-                            children: [
-                              Row(
-                                children: [
-                                  Icon(Icons.error, color: Colors.red.shade700, size: 16),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      'Rastreamento ativo sem viagem associada',
-                                      style: TextStyle(
-                                        color: Colors.red.shade700,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'O rastreamento será encerrado automaticamente em breve. Viagem é obrigatória.',
-                                style: TextStyle(
-                                  color: Colors.red.shade600,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
-
-            // Configurações Avançadas (ExpansionTile)
-            Card(
-              child: ExpansionTile(
-                title: Text(
-                  AppConfig.advancedSettingsText,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                leading: const Icon(Icons.settings),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      children: [
-                        // Configuração de CPF
-                        Card(
-                          color: _hasCpfConfigured ? Colors.green.shade50 : Colors.orange.shade50,
-                          child: Padding(
-                            padding: const EdgeInsets.all(16.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Icon(
-                                      _hasCpfConfigured ? Icons.check_circle : Icons.warning,
-                                      color: _hasCpfConfigured ? Colors.green : Colors.orange,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      'CPF do Motorista',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: _hasCpfConfigured ? Colors.green.shade700 : Colors.orange.shade700,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                if (_hasCpfConfigured) ...[
-                                  Text(
-                                    'CPF configurado: ${CpfValidator.formatCpf(_cpf)}',
-                                    style: TextStyle(color: Colors.green.shade700),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  const Text(
-                                    'Você pode alterar nas configurações.',
-                                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                                  ),
-                                ] else ...[
-                                  const Text(
-                                    'CPF não configurado. É obrigatório para usar o aplicativo.',
-                                    style: TextStyle(color: Colors.orange),
-                                  ),
-                                ],
-                                const SizedBox(height: 12),
-                                SizedBox(
-                                  width: double.infinity,
-                                  child: OutlinedButton.icon(
-                                    onPressed: () => _navigateToCpfConfig(),
-                                    icon: Icon(_hasCpfConfigured ? Icons.edit : Icons.add),
-                                    label: Text(_hasCpfConfigured ? 'Alterar CPF' : 'Configurar CPF'),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        
-                        const SizedBox(height: 16),
-                        
-                        // Status do Motorista
-                        Row(
-                          children: [
-                            const Text('Status: '),
-                        Expanded(
-                          child: DropdownButton<String>(
-                            value: _status,
-                            isExpanded: true,
-                            items: _statusOptions.map((String status) {
-                              return DropdownMenuItem<String>(
-                                value: status,
-                                child: Text(AppConfig.statusDisplayNames[status] ?? status),
-                              );
-                            }).toList(),
-                            onChanged: (String? newValue) {
-                              if (newValue != null) {
-                                setState(() {
-                                  _status = newValue;
-                                });
-                              }
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                        
-                    const SizedBox(height: 16),
-                        
-                        // Bateria
-                    Row(
-                      children: [
-                        const Text('Bateria (%): '),
-                        Expanded(
-                          child: TextField(
-                            controller: _batteryController,
-                            keyboardType: TextInputType.number,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.digitsOnly,
-                              LengthLimitingTextInputFormatter(3),
-                            ],
-                            onChanged: (value) {
-                              setState(() {
-                                _batteryLevel = double.tryParse(value);
-                              });
-                            },
-                            decoration: const InputDecoration(
-                              hintText: 'Ex: 85',
-                              border: OutlineInputBorder(),
-                            ),
-                          ),
-                        ),
-                      ],
-            ),
-            
-            const SizedBox(height: 16),
-
-                        // Botões de ação
-                    Row(
-                      children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: _isLoading ? null : _updateBackgroundServiceInterval,
-                                icon: const Icon(Icons.timer),
-                                label: const Text('Intervalo'),
-                              ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: _isLoading ? null : _sendLocation,
-                                icon: const Icon(Icons.location_on),
-                                label: const Text('Teste Manual'),
-                              ),
-                            ),
-                          ],
-                        ),
-                        
-                    const SizedBox(height: 8),
-                        
-                        
-                        
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // Última Localização
-            if (_lastLocation != null) ...[
-              Text(
-                'Última Localização Enviada',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildInfoRow('Motorista', _lastLocation!.driverName ?? _lastLocation!.driverUsername ?? 'N/A'),
-                      _buildInfoRow('Latitude', _lastLocation!.latitude.toString()),
-                      _buildInfoRow('Longitude', _lastLocation!.longitude.toString()),
-                      if (_lastLocation!.accuracy != null)
-                        _buildInfoRow('Precisão', '${_lastLocation!.accuracy!.toStringAsFixed(2)} m'),
-                      if (_lastLocation!.speed != null)
-                        _buildInfoRow('Velocidade', '${_lastLocation!.speed!.toStringAsFixed(2)} km/h'),
-                      if (_lastLocation!.batteryLevel != null)
-                        _buildInfoRow('Bateria', '${_lastLocation!.batteryLevel}%'),
-                      _buildInfoRow('Status', AppConfig.statusDisplayNames[_lastLocation!.status] ?? _lastLocation!.status),
-                      if (_lastLocation!.timestamp != null)
-                        _buildInfoRow('Enviado em', _formatDateTime(_lastLocation!.timestamp!)),
-                    ],
-                  ),
-                ),
-              ),
-            ] else ...[
-              const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: Center(
-                    child: Text(
-                      'Nenhuma localização enviada ainda',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-
-            const SizedBox(height: 16),
-
-            // Informações sobre a API
-            Card(
-              color: Colors.blue.shade50,
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.info_outline, color: Colors.blue.shade700),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Informações da API',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blue.shade700,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    FutureBuilder<String>(
-                      future: AppConfig.apiBaseUrl,
-                      builder: (context, snapshot) {
-                        if (snapshot.hasData) {
-                          return Text('• Servidor: ${snapshot.data!.replaceAll('/api/v1', '')}');
-                        }
-                        return const Text('• Servidor: Carregando...');
-                      },
-                    ),
-                    const Text('• Endpoint: /api/drivers/send_location/'),
-                    const Text('• CPF obrigatório e deve estar cadastrado'),
-                    const Text('• Motorista deve existir previamente'),
-                    const Text('• Iniciar Viagem → Cria viagem + inicia rastreamento'),
-                    const Text('• Parar Viagem → Para rastreamento + finaliza viagem'),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+  String _formatDateTime(DateTime dateTime) {
+    return '${dateTime.day.toString().padLeft(2, '0')}/'
+           '${dateTime.month.toString().padLeft(2, '0')}/'
+           '${dateTime.year} '
+           '${dateTime.hour.toString().padLeft(2, '0')}:'
+           '${dateTime.minute.toString().padLeft(2, '0')}';
   }
 
   Widget _buildInfoRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+            children: [
           SizedBox(
-            width: 80,
+            width: 120,
             child: Text(
               '$label:',
-              style: const TextStyle(fontWeight: FontWeight.w500),
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
           ),
           Expanded(
@@ -1039,10 +353,424 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildRotaAtivaCard() {
+    if (_rotaAtiva == null) return const SizedBox.shrink();
 
-  String _formatDateTime(DateTime dateTime) {
-    return '${dateTime.day}/${dateTime.month}/${dateTime.year} '
-           '${dateTime.hour.toString().padLeft(2, '0')}:'
-           '${dateTime.minute.toString().padLeft(2, '0')}';
+    final fretesConcluidos = _rotaAtiva!.fretesRota
+        ?.where((fr) => fr.statusRota == 'CONCLUIDO')
+        .length ?? 0;
+    final totalFretes = _rotaAtiva!.fretesRota?.length ?? 0;
+    final progresso = totalFretes > 0 ? fretesConcluidos / totalFretes : 0.0;
+
+    return Card(
+      margin: const EdgeInsets.all(16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                Icon(
+                  Icons.route,
+                  color: Colors.blue.shade700,
+                  size: 24,
+                ),
+                            const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Rota Ativa',
+                              style: TextStyle(
+                      fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                      color: Colors.blue.shade700,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () {
+                    setState(() {
+                      _expandedFretes = !_expandedFretes;
+                    });
+                  },
+                  icon: Icon(
+                    _expandedFretes ? Icons.expand_less : Icons.expand_more,
+                              ),
+                            ),
+                          ],
+                        ),
+            const SizedBox(height: 12),
+            _buildInfoRow('ID da Rota', _rotaAtiva!.id.toString()),
+            _buildInfoRow('Status', _rotaAtiva!.status),
+            _buildInfoRow('Progresso', '$fretesConcluidos de $totalFretes fretes'),
+                        const SizedBox(height: 8),
+            LinearProgressIndicator(
+              value: progresso,
+              backgroundColor: Colors.grey.shade300,
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.blue.shade700),
+            ),
+            const SizedBox(height: 12),
+            if (_expandedFretes) ...[
+              const Divider(),
+              const SizedBox(height: 8),
+              Text(
+                'Fretes da Rota',
+                            style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ...(_rotaAtiva!.fretesRota ?? []).map((freteRota) => 
+                _buildFreteRotaItem(freteRota)
+                  ),
+                ],
+                const SizedBox(height: 16),
+            if (fretesConcluidos == totalFretes && totalFretes > 0)
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _finalizarViagem,
+                  icon: const Icon(Icons.check_circle),
+                  label: const Text('Finalizar Viagem'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade700,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+    );
+  }
+
+  Widget _buildFreteRotaItem(FreteRota freteRota) {
+    final frete = freteRota.frete;
+    final isConcluido = freteRota.statusRota == 'CONCLUIDO';
+    final isEmExecucao = freteRota.statusRota == 'EM_EXECUCAO';
+
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      color: isConcluido 
+          ? Colors.green.shade50 
+          : isEmExecucao 
+              ? Colors.blue.shade50 
+              : Colors.grey.shade50,
+      child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                Icon(
+                  isConcluido 
+                      ? Icons.check_circle 
+                      : isEmExecucao 
+                          ? Icons.play_circle 
+                          : Icons.pending,
+                  color: isConcluido 
+                      ? Colors.green 
+                      : isEmExecucao 
+                          ? Colors.blue 
+                          : Colors.grey,
+                  size: 20,
+                ),
+                        const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    frete.codigoPublico,
+                    style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isConcluido 
+                        ? Colors.green 
+                        : isEmExecucao 
+                            ? Colors.blue 
+                            : Colors.grey,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    freteRota.statusRota,
+                    style: const TextStyle(
+                      color: Colors.white,
+                        fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                      ),
+                    ),
+                  ],
+                ),
+            const SizedBox(height: 8),
+            Text('Cliente: ${frete.clienteNome}'),
+            if (frete.origem != null)
+              Text('Origem: ${frete.origem}'),
+            if (frete.destino != null)
+              Text('Destino: ${frete.destino}'),
+            Text('Tipo: ${frete.tipoServico}'),
+            const SizedBox(height: 12),
+            FreteActionButton(
+              frete: frete,
+              onPressed: isConcluido ? null : () => _atualizarStatusFrete(frete.id),
+              ),
+            ],
+          ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Sistema EG3 - Motoristas'),
+        backgroundColor: Colors.blue.shade700,
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            onPressed: () {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => const LoginScreen()),
+              );
+            },
+            icon: const Icon(Icons.logout),
+            tooltip: 'Sair',
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Card de informações do motorista
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.person,
+                          color: Colors.blue.shade700,
+                          size: 24,
+                        ),
+                        const SizedBox(width: 8),
+                              Text(
+                          'Informações do Motorista',
+                          style: TextStyle(
+                            fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                            color: Colors.blue.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _buildInfoRow('CPF', _hasCpfConfigured ? _cpf : 'Não configurado'),
+                    _buildInfoRow('Status', _isBackgroundServiceRunning ? 'Online' : 'Offline'),
+                    if (_activeTrip != null) ...[
+                      _buildInfoRow('Viagem Ativa', 'Sim'),
+                      _buildInfoRow('Início', _formatDateTime(_activeTrip!.createdAt!)),
+                      _buildInfoRow('Última Atualização', _formatDateTime(_activeTrip!.updatedAt!)),
+                    ] else ...[
+                      _buildInfoRow('Viagem Ativa', 'Não'),
+                    ],
+                    if (_lastLocation != null) ...[
+                      _buildInfoRow('Última Localização', 
+                        '${_lastLocation!.latitude.toStringAsFixed(6)}, '
+                        '${_lastLocation!.longitude.toStringAsFixed(6)}'),
+                      _buildInfoRow('Precisão', '${_lastLocation!.accuracy?.toStringAsFixed(1)}m'),
+                      _buildInfoRow('Velocidade', '${_lastLocation!.speed?.toStringAsFixed(1)} km/h'),
+                      _buildInfoRow('Direção', '${_lastLocation!.heading?.toStringAsFixed(0)}°'),
+                      _buildInfoRow('Altitude', '${_lastLocation!.altitude?.toStringAsFixed(1)}m'),
+                      _buildInfoRow('Timestamp', _formatDateTime(_lastLocation!.timestamp!)),
+                    ],
+                      ],
+                    ),
+                        ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Card de rota ativa (se houver)
+            if (_hasActiveRota) _buildRotaAtivaCard(),
+
+            // Botão principal de ação
+            Card(
+              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                      child: Column(
+                                        children: [
+                    if (!_hasCpfConfigured) ...[
+                      const Text(
+                        'Configure seu CPF para começar',
+                                            style: TextStyle(
+                          fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+            ),
+                              ),
+            const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _navigateToCpfConfig,
+                          icon: const Icon(Icons.person_add),
+                          label: const Text('Configurar CPF'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange.shade700,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                    ] else if (!_hasActiveRota) ...[
+                      const Text(
+                        'Inicie uma viagem para começar o rastreamento',
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                          onPressed: _isLoading ? null : _startTripAndTracking,
+                          icon: _isLoading 
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.play_arrow),
+                          label: Text(_isLoading ? 'Iniciando...' : 'Iniciar Viagem'),
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green.shade700,
+                          foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                                  ),
+                        ),
+                      ),
+                    ] else ...[
+                      const Text(
+                        'Viagem em andamento',
+                          style: TextStyle(
+                            fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green,
+                        ),
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                          onPressed: _finalizarViagem,
+                          icon: const Icon(Icons.stop),
+                          label: const Text('Finalizar Viagem'),
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red.shade700,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
+                    ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Card de fretes ativos
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.local_shipping,
+                          color: Colors.blue.shade700,
+                          size: 24,
+                        ),
+                        const SizedBox(width: 8),
+                          Text(
+                          'Fretes Ativos',
+                            style: TextStyle(
+                            fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue.shade700,
+                            ),
+                          ),
+                          const Spacer(),
+                        if (_loadingFretes)
+                          const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ],
+                    ),
+                      const SizedBox(height: 12),
+                    if (_fretesAtivos.isEmpty && !_loadingFretes)
+                      const Text('Nenhum frete ativo encontrado.')
+                    else
+                      ..._fretesAtivos.map((frete) => Card(
+                        margin: const EdgeInsets.symmetric(vertical: 4),
+                        child: ListTile(
+                          leading: Icon(
+                            Icons.local_shipping,
+                            color: Colors.blue.shade700,
+                          ),
+                          title: Text(frete.codigoPublico ?? 'Frete ${frete.id}'),
+                          subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                              if (frete.clienteNome != null) Text('Cliente: ${frete.clienteNome}'),
+                              if (frete.origem != null) Text('Origem: ${frete.origem}'),
+                              if (frete.destino != null) Text('Destino: ${frete.destino}'),
+                            ],
+                          ),
+                          trailing: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                              color: Colors.blue,
+                              borderRadius: BorderRadius.circular(12),
+                          ),
+                                child: Text(
+                              frete.statusAtual ?? 'Pendente',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                        ),
+                      )),
+                            ],
+                          ),
+                        ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

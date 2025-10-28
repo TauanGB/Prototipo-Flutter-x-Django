@@ -1,6 +1,31 @@
-﻿# Sistema de LocalizaÃ§Ã£o em Tempo Real para Motoristas
+﻿# ⚠️ BACKEND OBSOLETO - MIGRADO PARA SISTEMAEG3
+
+## 🚨 AVISO IMPORTANTE
+
+**Este backend foi migrado para o SistemaEG3 e está obsoleto.**
+
+- **✅ Nova Localização:** `../SistemaEG3/`
+- **📅 Data de Migração:** 2024
+- **🔄 Status:** Migração Concluída
+- **📖 Documentação:** `../SistemaEG3/MIGRACAO_FLUTTER.md`
+
+### ⚡ Para Desenvolvimento Atual:
+1. Use o **SistemaEG3** como backend principal
+2. Consulte a documentação de migração
+3. APIs mantêm compatibilidade com o app Flutter
+
+### 🔗 Links Úteis:
+- [SistemaEG3](../SistemaEG3/)
+- [Documentação de Migração](../SistemaEG3/MIGRACAO_FLUTER.md)
+- [Mapeamento de APIs](../SistemaEG3/MIGRACAO_FLUTER.md#mapeamento-de-endpoints)
+
+---
+
+# Sistema de LocalizaÃ§Ã£o em Tempo Real para Motoristas
 
 Este projeto implementa uma API Django para receber dados de localizaÃ§Ã£o em tempo real de motoristas atravÃ©s de seus celulares.
+
+**⚠️ NOTA:** Este backend está obsoleto. Use o SistemaEG3 para desenvolvimento futuro.
 
 ## Funcionalidades
 

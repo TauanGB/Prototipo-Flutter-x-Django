@@ -125,7 +125,9 @@ class _CpfConfigScreenState extends State<CpfConfigScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Configuração de CPF'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
+        elevation: 0,
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),

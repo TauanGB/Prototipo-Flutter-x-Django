@@ -33,6 +33,7 @@ LOCAL_APPS = [
     'apps.core',
     'apps.users',
     'apps.api',
+    'fretes',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -136,9 +137,13 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:8080",
     "http://127.0.0.1:8080",
     "http://10.0.2.2:8080",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://10.0.2.2:8000",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_ALL_ORIGINS = True  # Para desenvolvimento - remover em produção
 
 # Security settings
 SECURE_BROWSER_XSS_FILTER = True

@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:developer';
 import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
-import 'config_service.dart';
+import '../models/api_config.dart';
 
 class CpfValidationResult {
   final String cpf;
@@ -51,7 +51,7 @@ class CpfValidationResult {
 
 class CpfValidationService {
   // Obtém a URL base dinamicamente
-  static Future<String> get baseUrl async => await AppConfig.apiBaseUrl;
+  static String get baseUrl => AppConfig.apiBaseUrl;
   
   // Headers padrão para as requisições
   static Map<String, String> get _headers => {
@@ -62,8 +62,7 @@ class CpfValidationService {
   /// Verifica se um CPF está cadastrado no sistema
   static Future<CpfValidationResult> checkCpf(String cpf) async {
     try {
-      final config = await ConfigService.getApiConfig();
-      final uri = Uri.parse('${config.baseUrl}/drivers/check_driver/?cpf=$cpf');
+      final uri = Uri.parse('${ApiConfig.baseUrl}/drivers/check_driver/?cpf=$cpf');
       log('GET para: $uri', name: 'CpfValidationService');
       
       final response = await http.get(

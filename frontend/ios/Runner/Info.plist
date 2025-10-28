@@ -67,5 +67,28 @@
 	<array>
 		<string>com.example.frontend.location-update</string>
 	</array>
+	
+	<!-- Configurações para WebView -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>sistemaeg3-production.up.railway.app</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSExceptionMinimumTLSVersion</key>
+				<string>TLSv1.0</string>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	
+	<!-- Habilitar WebView -->
+	<key>io.flutter.embedded_views_preview</key>
+	<true/>
 </dict>
 </plist>

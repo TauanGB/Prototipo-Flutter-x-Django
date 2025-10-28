@@ -10,22 +10,22 @@ class DriverTrip {
   final String? driverName;
   @JsonKey(name: 'driver_cpf')
   final String? driverCpf;
-  @JsonKey(name: 'start_latitude')
+  @JsonKey(name: 'start_latitude', fromJson: _stringToDouble, toJson: _doubleToString)
   final double? startLatitude;
-  @JsonKey(name: 'start_longitude')
+  @JsonKey(name: 'start_longitude', fromJson: _stringToDouble, toJson: _doubleToString)
   final double? startLongitude;
-  @JsonKey(name: 'end_latitude')
+  @JsonKey(name: 'end_latitude', fromJson: _stringToDouble, toJson: _doubleToString)
   final double? endLatitude;
-  @JsonKey(name: 'end_longitude')
+  @JsonKey(name: 'end_longitude', fromJson: _stringToDouble, toJson: _doubleToString)
   final double? endLongitude;
-  @JsonKey(name: 'current_latitude')
+  @JsonKey(name: 'current_latitude', fromJson: _stringToDouble, toJson: _doubleToString)
   final double? currentLatitude;
-  @JsonKey(name: 'current_longitude')
+  @JsonKey(name: 'current_longitude', fromJson: _stringToDouble, toJson: _doubleToString)
   final double? currentLongitude;
   final String status;
-  @JsonKey(name: 'distance_km')
+  @JsonKey(name: 'distance_km', fromJson: _stringToDouble, toJson: _doubleToString)
   final double? distanceKm;
-  @JsonKey(name: 'duration_minutes')
+  @JsonKey(name: 'duration_minutes', fromJson: _stringToInt, toJson: _intToString)
   final int? durationMinutes;
   @JsonKey(name: 'started_at')
   final DateTime? startedAt;
@@ -100,6 +100,35 @@ class DriverTrip {
   String get formattedDistance {
     if (distanceKm == null) return 'N/A';
     return '${distanceKm!.toStringAsFixed(1)} km';
+  }
+
+  // Funções auxiliares para conversão de tipos
+  static double? _stringToDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) {
+      return double.tryParse(value);
+    }
+    return null;
+  }
+
+  static String? _doubleToString(double? value) {
+    return value?.toString();
+  }
+
+  static int? _stringToInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is double) return value.toInt();
+    if (value is String) {
+      return int.tryParse(value);
+    }
+    return null;
+  }
+
+  static String? _intToString(int? value) {
+    return value?.toString();
   }
 }
 

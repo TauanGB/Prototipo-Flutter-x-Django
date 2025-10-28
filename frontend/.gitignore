@@ -1,3 +1,6 @@
+# Sistema EG3 - App para Motoristas (Mobile Only)
+# Este projeto é exclusivamente para Android e iOS
+
 # Miscellaneous
 *.class
 *.log
@@ -23,7 +26,7 @@ migrate_working_dir/
 # is commented out by default.
 #.vscode/
 
-# Flutter/Dart/Pub related
+# Flutter/Dart/Pub related (Mobile)
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
@@ -43,3 +46,39 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# iOS specific
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/ephemeral/
+**/ios/Flutter/app.flx
+**/ios/Flutter/app.zip
+**/ios/Flutter/flutter_assets/
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/ServiceDefinitions.json
+**/ios/Runner/GeneratedPluginRegistrant.*
+
+# Android specific
+**/android/.gradle/
+**/android/captures/
+**/android/gradlew
+**/android/gradlew.bat
+**/android/local.properties
+**/android/**/GeneratedPluginRegistrant.java
+**/android/key.properties
+**/android/app/google-services.json
+
+# Mobile build artifacts
+*.apk
+*.ipa
+*.aab
+
+# Platform-specific files (not needed for mobile-only app)
+# These directories were removed as the app is mobile-only
+# /web/
+# /windows/
+# /linux/
+# /macos/

@@ -129,4 +129,37 @@ class BackgroundLocationService {
       throw UnsupportedError('Plataforma não suportada para background service');
     }
   }
+  
+  /// Salva dados da viagem ativa
+  static Future<void> saveActiveTripData(Map<String, dynamic> tripData) async {
+    if (Platform.isAndroid) {
+      await android.BackgroundLocationServiceAndroid.saveActiveTripData(tripData);
+    } else if (Platform.isIOS) {
+      await ios.BackgroundLocationServiceIOS.saveActiveTripData(tripData);
+    } else {
+      throw UnsupportedError('Plataforma não suportada para background service');
+    }
+  }
+  
+  /// Restaura dados da viagem ativa
+  static Future<Map<String, dynamic>?> restoreActiveTripData() async {
+    if (Platform.isAndroid) {
+      return await android.BackgroundLocationServiceAndroid.restoreActiveTripData();
+    } else if (Platform.isIOS) {
+      return await ios.BackgroundLocationServiceIOS.restoreActiveTripData();
+    } else {
+      throw UnsupportedError('Plataforma não suportada para background service');
+    }
+  }
+  
+  /// Limpa dados da viagem ativa
+  static Future<void> clearActiveTripData() async {
+    if (Platform.isAndroid) {
+      await android.BackgroundLocationServiceAndroid.clearActiveTripData();
+    } else if (Platform.isIOS) {
+      await ios.BackgroundLocationServiceIOS.clearActiveTripData();
+    } else {
+      throw UnsupportedError('Plataforma não suportada para background service');
+    }
+  }
 }
