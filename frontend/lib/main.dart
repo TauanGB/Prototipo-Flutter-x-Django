@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:frontend/config/app_config.dart';
-import 'package:frontend/config/app_theme.dart';
-import 'package:frontend/screens/main_navigation_screen.dart';
-import 'package:frontend/screens/login_screen.dart';
-import 'package:frontend/services/storage_service.dart';
-import 'package:frontend/widgets/splash_screen.dart';
+import 'config/app_config.dart';
+import 'config/app_theme.dart';
+import 'screens/main_navigation_screen.dart';
+import 'screens/login_screen.dart';
+import 'services/storage_service.dart';
+import 'widgets/splash_screen.dart';
 import 'dart:developer' as developer;
 
 /// Sistema EG3 - App para Motoristas

@@ -1,7 +1,9 @@
 import 'dart:convert';
-import 'package:frontend/config/api_endpoints.dart';
-import 'package:frontend/services/api_client.dart';
-import 'package:frontend/services/storage_service.dart';
+import '../config/api_endpoints.dart';
+import '../models/driver_session.dart';
+import '../utils/sync_state_utils.dart';
+import 'api_client.dart';
+import 'storage_service.dart';
 import 'dart:developer' as developer;
 
 /// Serviço de autenticação para SistemaEG3
@@ -88,7 +90,7 @@ class AuthServiceEG3 {
         
         developer.log('✅ Login realizado com sucesso', name: 'AuthServiceEG3');
         
-        // Salvar token e dados do usuário
+        // Salvar token e dados do usuário (compatibilidade)
         await StorageService.saveAuthToken(token);
         await StorageService.saveUserData(data['user'], data['perfil']);
         
@@ -98,7 +100,14 @@ class AuthServiceEG3 {
         // Salvar último login
         await StorageService.saveLastLogin(DateTime.now());
         
-        developer.log('✅ Login completo - CPF e último login salvos', name: 'AuthServiceEG3');
+        // Criar e salvar DriverSession (novo formato)
+        final driverSession = DriverSession.fromLoginResponse(data);
+        await SyncStateUtils.saveDriverSession(driverSession);
+        
+        // Inicializar SyncState vazio após login
+        await SyncStateUtils.inicializarSyncStateVazio(driverSession.motoristaId);
+        
+        developer.log('✅ Login completo - DriverSession e SyncState inicializados', name: 'AuthServiceEG3');
         
         return {
           'success': true,

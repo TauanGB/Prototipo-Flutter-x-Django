@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
 import 'package:http/http.dart' as http;
-import 'package:frontend/services/storage_service.dart';
+import 'storage_service.dart';
 import 'dart:developer' as developer;
 
 /// Cliente HTTP centralizado com interceptors e tratamento de erros
@@ -21,9 +21,6 @@ class ApiClient {
       final token = await StorageService.getAuthToken();
       if (token != null && token.isNotEmpty) {
         headers['Authorization'] = 'Token $token';
-        developer.log('🔑 Token incluído na requisição', name: 'ApiClient');
-      } else {
-        developer.log('⚠️ Nenhum token encontrado para autenticação', name: 'ApiClient');
       }
     }
     
@@ -33,25 +30,46 @@ class ApiClient {
   /// Requisição GET
   static Future<http.Response> get(String url, {bool requiresAuth = true}) async {
     try {
-      developer.log('📤 GET: $url', name: 'ApiClient');
+      developer.log('GET $url', name: 'ApiClient');
       
       final headers = await _getHeaders(includeAuth: requiresAuth);
-      final response = await http.get(
-        Uri.parse(url),
-        headers: headers,
-      ).timeout(_timeout);
       
-      developer.log('📥 GET Response: ${response.statusCode}', name: 'ApiClient');
-      await _handleResponse(response);
-      return response;
+      // Cliente HTTP que segue redirecionamentos automaticamente
+      final client = http.Client();
+      var request = http.Request('GET', Uri.parse(url));
+      request.headers.addAll(headers);
+      
+      var response = await client.send(request).timeout(_timeout);
+      
+      // Seguir redirecionamentos (301, 302, 307, 308)
+      int maxRedirects = 5;
+      int redirectCount = 0;
+      
+      while (response.statusCode >= 300 && response.statusCode < 400 && redirectCount < maxRedirects) {
+        final location = response.headers['location'];
+        if (location != null) {
+          redirectCount++;
+          request = http.Request('GET', Uri.parse(location));
+          request.headers.addAll(headers);
+          response = await client.send(request).timeout(_timeout);
+        } else {
+          break;
+        }
+      }
+      
+      final responseBody = await http.Response.fromStream(response);
+      client.close();
+      
+      await _handleResponse(responseBody);
+      return responseBody;
     } on SocketException {
-      developer.log('❌ SocketException: Sem conexão com a internet', name: 'ApiClient');
+      developer.log('Sem conexão', name: 'ApiClient');
       throw ApiException('Sem conexão com a internet');
     } on TimeoutException {
-      developer.log('❌ TimeoutException: Tempo de conexão esgotado', name: 'ApiClient');
+      developer.log('Timeout', name: 'ApiClient');
       throw ApiException('Tempo de conexão esgotado');
     } catch (e) {
-      developer.log('❌ Erro na requisição GET: $e', name: 'ApiClient');
+      developer.log('Erro: $e', name: 'ApiClient');
       throw ApiException('Erro na requisição: $e');
     }
   }
@@ -63,27 +81,48 @@ class ApiClient {
     {bool requiresAuth = true}
   ) async {
     try {
-      developer.log('📤 POST: $url', name: 'ApiClient');
-      developer.log('📤 Body: ${json.encode(body)}', name: 'ApiClient');
+      developer.log('POST $url', name: 'ApiClient');
       
       final headers = await _getHeaders(includeAuth: requiresAuth);
-      final response = await http.post(
-        Uri.parse(url),
-        headers: headers,
-        body: json.encode(body),
-      ).timeout(_timeout);
       
-      developer.log('📥 POST Response: ${response.statusCode}', name: 'ApiClient');
-      await _handleResponse(response);
-      return response;
+      // Cliente HTTP que segue redirecionamentos automaticamente
+      final client = http.Client();
+      var request = http.Request('POST', Uri.parse(url));
+      request.headers.addAll(headers);
+      request.body = json.encode(body);
+      
+      var response = await client.send(request).timeout(_timeout);
+      
+      // Seguir redirecionamentos (301, 302, 307, 308)
+      int maxRedirects = 5;
+      int redirectCount = 0;
+      
+      while (response.statusCode >= 300 && response.statusCode < 400 && redirectCount < maxRedirects) {
+        final location = response.headers['location'];
+        if (location != null) {
+          redirectCount++;
+          request = http.Request('POST', Uri.parse(location));
+          request.headers.addAll(headers);
+          request.body = json.encode(body);
+          response = await client.send(request).timeout(_timeout);
+        } else {
+          break;
+        }
+      }
+      
+      final responseBody = await http.Response.fromStream(response);
+      client.close();
+      
+      await _handleResponse(responseBody);
+      return responseBody;
     } on SocketException {
-      developer.log('❌ SocketException: Sem conexão com a internet', name: 'ApiClient');
+      developer.log('Sem conexão', name: 'ApiClient');
       throw ApiException('Sem conexão com a internet');
     } on TimeoutException {
-      developer.log('❌ TimeoutException: Tempo de conexão esgotado', name: 'ApiClient');
+      developer.log('Timeout', name: 'ApiClient');
       throw ApiException('Tempo de conexão esgotado');
     } catch (e) {
-      developer.log('❌ Erro na requisição POST: $e', name: 'ApiClient');
+      developer.log('Erro: $e', name: 'ApiClient');
       throw ApiException('Erro na requisição: $e');
     }
   }
@@ -187,38 +226,37 @@ class ApiClient {
         break;
         
       case 400:
-        // Bad Request - erro de validação
-        developer.log('⚠️ Bad Request (400): ${response.body}', name: 'ApiClient');
+        developer.log('400 Bad Request', name: 'ApiClient');
         throw BadRequestException('Dados inválidos enviados');
         
       case 401:
-        // Unauthorized - token inválido ou expirado
-        developer.log('🔒 Unauthorized (401): Token inválido ou expirado', name: 'ApiClient');
+        developer.log('401 Unauthorized', name: 'ApiClient');
         await StorageService.clearAuthToken();
         await StorageService.clearUserData();
         throw UnauthorizedException('Sessão expirada. Faça login novamente.');
         
       case 403:
-        // Forbidden - sem permissão
-        developer.log('🚫 Forbidden (403): Sem permissão', name: 'ApiClient');
+        developer.log('403 Forbidden', name: 'ApiClient');
         throw ForbiddenException('Você não tem permissão para esta ação');
         
       case 404:
-        // Not Found
-        developer.log('🔍 Not Found (404): Recurso não encontrado', name: 'ApiClient');
-        throw NotFoundException('Recurso não encontrado');
+        developer.log('404 Not Found', name: 'ApiClient');
+        break;
+        
+      case 409:
+        developer.log('409 Conflict', name: 'ApiClient');
+        throw ConflictException('Inconsistência de dados (rotas/fretes)');
         
       case 500:
-        // Internal Server Error
-        developer.log('💥 Server Error (500): Erro interno do servidor', name: 'ApiClient');
+        developer.log('500 Server Error', name: 'ApiClient');
         throw ServerException('Erro no servidor. Tente novamente mais tarde.');
         
       default:
         if (response.statusCode >= 500) {
-          developer.log('💥 Server Error (${response.statusCode}): Erro do servidor', name: 'ApiClient');
+          developer.log('${response.statusCode} Server Error', name: 'ApiClient');
           throw ServerException('Erro no servidor. Tente novamente mais tarde.');
         } else {
-          developer.log('❓ Status desconhecido (${response.statusCode}): ${response.body}', name: 'ApiClient');
+          developer.log('${response.statusCode} Unknown', name: 'ApiClient');
           throw ApiException('Erro desconhecido (${response.statusCode})');
         }
     }
@@ -241,6 +279,39 @@ class ApiClient {
     } catch (e) {
       developer.log('🔍 Teste de conexão falhou: $e', name: 'ApiClient');
       return false;
+    }
+  }
+
+  /// Sincroniza dados do motorista com o backend
+  static Future<http.Response> syncMotorista(
+    int motoristaId,
+    int rotaId,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      final url = '/api/v1/motoristas/$motoristaId/rotas/$rotaId/sync/';
+      developer.log('📤 SYNC: $url', name: 'ApiClient');
+      developer.log('📤 Payload: ${json.encode(payload)}', name: 'ApiClient');
+      
+      final headers = await _getHeaders(includeAuth: true);
+      final response = await http.post(
+        Uri.parse(url),
+        headers: headers,
+        body: json.encode(payload),
+      ).timeout(_timeout);
+      
+      developer.log('📥 SYNC Response: ${response.statusCode}', name: 'ApiClient');
+      await _handleResponse(response);
+      return response;
+    } on SocketException {
+      developer.log('❌ SocketException: Sem conexão com a internet', name: 'ApiClient');
+      throw ApiException('Sem conexão com a internet');
+    } on TimeoutException {
+      developer.log('❌ TimeoutException: Tempo de conexão esgotado', name: 'ApiClient');
+      throw ApiException('Tempo de conexão esgotado');
+    } catch (e) {
+      developer.log('❌ Erro na sincronização: $e', name: 'ApiClient');
+      throw ApiException('Erro na sincronização: $e');
     }
   }
 }
@@ -272,6 +343,11 @@ class ForbiddenException extends ApiException {
 /// Exceção para recurso não encontrado (404)
 class NotFoundException extends ApiException {
   NotFoundException(String message) : super(message);
+}
+
+/// Exceção para conflito de dados (409)
+class ConflictException extends ApiException {
+  ConflictException(String message) : super(message);
 }
 
 /// Exceção para erros do servidor (500+)

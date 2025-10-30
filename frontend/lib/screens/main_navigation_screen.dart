@@ -1,8 +1,17 @@
 import 'package:flutter/material.dart';
-import 'dashboard_screen.dart';
+import 'home_motorista_page.dart';
 import 'unified_profile_screen.dart';
 import 'webview_screen.dart';
 
+/// Tela de navegação principal do aplicativo
+/// 
+/// Gerenciamento das três abas principais:
+/// - Aba 0 (Início): HomeMotoristaPage - Tela operacional principal do motorista
+///   Esta é onde o motorista executa sua jornada diária: iniciar viagem,
+///   ver fretes, avançar status, etc.
+/// - Aba 1 (Painel): WebViewScreen - Apenas para consulta de detalhes
+///   administrativos do sistema EG3. NÃO é o local principal para operações.
+/// - Aba 2 (Perfil): UnifiedProfileScreen - Configurações e perfil do motorista
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
 
@@ -16,8 +25,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   Widget _buildScreen(int index) {
     switch (index) {
       case 0:
-        return const DashboardScreen();
+        // Tela operacional principal - Home do motorista
+        return const HomeMotoristaPage();
       case 1:
+        // WebView apenas para consulta/detalhes (não deve ser usado para operações principais)
         return const WebViewScreen(
           path: '',
           title: 'Painel do Motorista',
@@ -25,7 +36,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       case 2:
         return const UnifiedProfileScreen();
       default:
-        return const DashboardScreen();
+        return const HomeMotoristaPage();
     }
   }
 
@@ -64,9 +75,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           ),
           items: const [
             BottomNavigationBarItem(
-              icon: Icon(Icons.dashboard_outlined),
-              activeIcon: Icon(Icons.dashboard),
-              label: 'Dashboard',
+              icon: Icon(Icons.home_outlined),
+              activeIcon: Icon(Icons.home),
+              label: 'Início',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.web_outlined),

@@ -1,18 +1,17 @@
-import '../models/api_config.dart';
-
-/// Configurações do Sistema EG3 - App para Motoristas
+/// Configurações do App Motorista - Sistema de Gestão de Fretes
 /// 
 /// Este aplicativo é exclusivamente para dispositivos móveis:
 /// - Android (API 21+)
 /// - iOS (iOS 12.0+)
 class AppConfig {
-  // URL base da API do backend Django - hard-coded
-  static String get apiBaseUrl => ApiConfig.baseUrl;
+  // URL base da API - configurável para diferentes ambientes
+  static const String _baseUrl = 'http://10.0.2.2:8000';
+  static String get apiBaseUrl => _baseUrl;
 
   // Configurações do app mobile
   static const String appVersion = '1.0.0';
-  static const String appName = 'Sistema EG3 - Motoristas';
-  static const String appDescription = 'App para Motoristas (Android e iOS)';
+  static const String appName = 'App Motorista';
+  static const String appDescription = 'Sistema de Gestão de Fretes para Motoristas';
   
   // Plataformas suportadas
   static const List<String> supportedPlatforms = ['android', 'ios'];
@@ -42,6 +41,12 @@ class AppConfig {
   static const int defaultBackgroundInterval = 30; // segundos
   static const int minBackgroundInterval = 15; // segundos
   static const int maxBackgroundInterval = 300; // 5 minutos
+  
+  // Intervalo de sincronização periódica (usado pelo serviço de background)
+  /// Intervalo em segundos para sincronização periódica com o backend
+  /// Deve ser usado pelo serviço de background quando rota_ativa = true
+  /// Definido conforme especificação em cursorrules
+  static const int SYNC_INTERVAL_SECONDS = 30;
   
   // Textos da UI centralizados
   static const String startTrackingText = 'Iniciar Rastreamento';

@@ -1,12 +1,12 @@
 import 'dart:convert';
-import 'package:frontend/config/api_endpoints.dart';
-import 'package:frontend/models/rota.dart';
-import 'package:frontend/models/frete_eg3.dart';
-import 'package:frontend/models/frete_rota.dart';
-import 'package:frontend/services/api_client.dart';
-import 'package:frontend/services/storage_service.dart';
-import 'package:frontend/services/background_location_service.dart';
-import 'package:frontend/services/frete_service.dart';
+import '../config/api_endpoints.dart';
+import '../models/rota.dart';
+import '../models/frete_eg3.dart';
+import '../models/frete_rota.dart';
+import 'api_client.dart';
+import 'storage_service.dart';
+import 'background_location_service.dart';
+import 'frete_service.dart';
 import 'dart:developer' as developer;
 
 /// Serviço para gerenciar execução de rotas
@@ -68,7 +68,7 @@ class RotaExecutionService {
 
       // Encontrar o frete na rota
       final freteRota = rotaAtiva.fretesRota?.firstWhere(
-        (fr) => fr.frete.id == freteId,
+        (fr) => fr.frete == freteId,
         orElse: () => throw Exception('Frete não encontrado na rota'),
       );
 
@@ -76,7 +76,12 @@ class RotaExecutionService {
         throw Exception('Frete não encontrado na rota');
       }
 
-      final frete = freteRota.frete;
+      // Obter dados do frete (pode estar em freteData ou precisar buscar)
+      final frete = freteRota.freteData;
+      if (frete == null) {
+        throw Exception('Dados do frete não disponíveis');
+      }
+      
       developer.log('🔍 Frete atual: ID=${frete.id}, Tipo=${frete.tipoServico}, Status=${frete.statusAtual}', name: 'RotaExecutionService');
       
       final proximoStatus = FreteEG3.getProximoStatus(frete.tipoServico, frete.statusAtual);
@@ -180,11 +185,32 @@ class RotaExecutionService {
               
               developer.log('📦 Frete ${frete.id}: StatusFrete=${frete.statusAtual} → StatusRota=$statusRota', name: 'RotaExecutionService');
               
+              // Mapear status da rota para display
+              String statusRotaDisplay;
+              switch (statusRota) {
+                case 'PENDENTE':
+                  statusRotaDisplay = 'Pendente';
+                  break;
+                case 'EM_EXECUCAO':
+                  statusRotaDisplay = 'Em Execução';
+                  break;
+                case 'CONCLUIDO':
+                  statusRotaDisplay = 'Concluído';
+                  break;
+                default:
+                  statusRotaDisplay = statusRota;
+              }
+              
               return FreteRota(
                 id: frete.id,
+                rota: 999, // ID virtual da rota (usar 999 como definido na linha 166)
+                frete: frete.id,
+                freteData: frete,
                 ordem: frete.id, // Usar ID como ordem temporariamente
                 statusRota: statusRota,
-                frete: frete,
+                statusRotaDisplay: statusRotaDisplay,
+                dataCriacao: DateTime.now(),
+                dataAtualizacao: DateTime.now(),
               );
             }).toList(),
           );
@@ -307,11 +333,32 @@ class RotaExecutionService {
                 statusRota = 'EM_EXECUCAO';
               }
               
+              // Mapear status da rota para display
+              String statusRotaDisplay;
+              switch (statusRota) {
+                case 'PENDENTE':
+                  statusRotaDisplay = 'Pendente';
+                  break;
+                case 'EM_EXECUCAO':
+                  statusRotaDisplay = 'Em Execução';
+                  break;
+                case 'CONCLUIDO':
+                  statusRotaDisplay = 'Concluído';
+                  break;
+                default:
+                  statusRotaDisplay = statusRota;
+              }
+              
               return FreteRota(
                 id: frete.id,
+                rota: rotaId,
+                frete: frete.id,
+                freteData: frete,
                 ordem: frete.id,
                 statusRota: statusRota,
-                frete: frete,
+                statusRotaDisplay: statusRotaDisplay,
+                dataCriacao: DateTime.now(),
+                dataAtualizacao: DateTime.now(),
               );
             }).toList(),
           );
@@ -463,14 +510,14 @@ class RotaExecutionService {
       final freteEmExecucao = rota.fretesRota!.firstWhere(
         (f) => f.statusRota == 'EM_EXECUCAO',
       );
-      return freteEmExecucao.frete;
+      return freteEmExecucao.freteData;
     } catch (e) {
       // Se não há frete em execução, busca o primeiro pendente
       try {
         final primeiroPendente = rota.fretesRota!.firstWhere(
           (f) => f.statusRota == 'PENDENTE',
         );
-        return primeiroPendente.frete;
+        return primeiroPendente.freteData;
       } catch (e) {
         return null;
       }
@@ -484,7 +531,7 @@ class RotaExecutionService {
     final fretesPendentes = rota.fretesRota!.where((f) => f.statusRota == 'PENDENTE').toList();
     if (fretesPendentes.isNotEmpty) {
       fretesPendentes.sort((a, b) => a.ordem.compareTo(b.ordem));
-      return fretesPendentes.first.frete;
+      return fretesPendentes.first.freteData;
     }
     
     return null;

@@ -62,7 +62,7 @@ class CpfValidationService {
   /// Verifica se um CPF está cadastrado no sistema
   static Future<CpfValidationResult> checkCpf(String cpf) async {
     try {
-      final uri = Uri.parse('${ApiConfig.baseUrl}/drivers/check_driver/?cpf=$cpf');
+      final uri = Uri.parse('${ApiConfig.baseUrl}/api/usuarios/motorista/verificar-cpf/?cpf=$cpf');
       log('GET para: $uri', name: 'CpfValidationService');
       
       final response = await http.get(

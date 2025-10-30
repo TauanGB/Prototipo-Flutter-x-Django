@@ -1,10 +1,12 @@
+import 'app_config.dart';
+
 /// Classe centralizada para gerenciar todos os endpoints da API
-/// URL hard-coded para produção no Railway
+/// Sistema de Gestão de Fretes para Motoristas
 class ApiEndpoints {
-  // URL hard-coded de produção
-  static const String _baseUrl = 'https://sistemaeg3-production.up.railway.app';
+  // URL base da API - usa configuração centralizada
+  static String get _baseUrl => AppConfig.apiBaseUrl;
   
-  // === AUTENTICAÇÃO (SistemaEG3) ===
+  // === AUTENTICAÇÃO ===
   /// Verificar se CPF existe (API pública)
   String get verificarCpfPublico => 
     '$_baseUrl/api/usuarios/publico/verificar-cpf/';
@@ -13,7 +15,7 @@ class ApiEndpoints {
   String get loginPorCpf => 
     '$_baseUrl/api/usuarios/publico/login-cpf/';
   
-  /// Obter token de autenticação (fallback)
+  /// Obter token de autenticação
   String get obtainAuthToken => '$_baseUrl/api/auth/token/';
   
   /// Login alternativo (session-based)
@@ -31,12 +33,15 @@ class ApiEndpoints {
   /// Alterar senha
   String get alterarSenha => '$_baseUrl/api/usuarios/usuarios/alterar-senha/';
   
-  // === FRETES (SistemaEG3) ===
+  // === FRETES ===
   /// Listar todos os fretes (filtrado por motorista)
   String get fretes => '$_baseUrl/api/fretes/fretes/';
   
   /// Fretes ativos
   String get fretesAtivos => '$_baseUrl/api/fretes/fretes/ativos/';
+  
+  /// Fretes elegíveis para um motorista
+  String get fretesElegiveis => '$_baseUrl/api/fretes/fretes/elegiveis/';
   
   /// Fretes do motorista logado
   String get fretesPorMotorista => '$_baseUrl/api/fretes/fretes-por-motorista/';
@@ -54,12 +59,60 @@ class ApiEndpoints {
   
   /// Estatísticas de fretes
   String get fretesStats => '$_baseUrl/api/fretes/fretes/stats/';
+  
+  /// Rota atual do motorista (GET autenticado)
+  /// Usando endpoint dedicado /motorista/rota-atual/ (funciona em localhost e produção)
+  String get rotaAtualMotorista => 
+    '$_baseUrl/api/fretes/motorista/rota-atual/';
+  
+  /// ID da rota ativa do motorista (lightweight)
+  String get motoristaRotaId => 
+    '$_baseUrl/api/fretes/motorista/rota-id/';
+
+  /// Fretes detalhados de uma rota específica
+  String rotaFretesDetail(int rotaId) => 
+    '$_baseUrl/api/fretes/rotas/$rotaId/fretes/';
+
+  /// Rota completa do motorista (dados + fretes em uma requisição)
+  String get motoristaRotaCompleta => 
+    '$_baseUrl/api/fretes/motorista/rota-completa/';
+
+  // === MOBILE INCREMENTAL (localhost e compatível) ===
+  /// Contagem de fretes da rota atual
+  String get mobileRotaAtualCount =>
+    '$_baseUrl/api/mobile/motorista/rota-atual/count/';
+
+  /// Dados gerais da rota (sem fretes)
+  String get mobileRotaAtualInfo =>
+    '$_baseUrl/api/mobile/motorista/rota-atual/info/';
+
+  /// Frete por índice (zero-based)
+  String mobileFreteByIndex(int rotaId, int index) =>
+    '$_baseUrl/api/mobile/motorista/rotas/$rotaId/fretes/$index/';
+
+  /// Iniciar rota explicitamente (motorista)
+  String mobileIniciarRota(int rotaId) =>
+    '$_baseUrl/api/mobile/motorista/rotas/$rotaId/iniciar/';
+  
+  /// Cancelar rota atual do motorista (mobile)
+  String get mobileCancelarRotaAtual =>
+    '$_baseUrl/api/mobile/motorista/rota-atual/cancelar/';
+  
+  /// Rota atual do motorista (legado - listar todas)
+  String get rotaAtual => '$_baseUrl/api/fretes/rotas/';
+  
+  /// Sincronização periódica do motorista (POST autenticado)
+  String get syncMotorista => 
+    '$_baseUrl/api/fretes/motorista/sync/';
+  
+  /// Sincronização periódica do motorista (legado)
+  String get syncMotoristaLegado => '$_baseUrl/api/fretes/motorista/iniciar-viagem/';
 
   // === DRIVERS (API de Rastreamento) ===
   /// Base URL para endpoints de drivers
-  String get drivers => '$_baseUrl/api/drivers';
+  String get drivers => '$_baseUrl/api/usuarios/motorista';
   
-  // === ROTAS (SistemaEG3) ===
+  // === ROTAS ===
   /// Listar rotas do motorista
   String get rotas => '$_baseUrl/api/fretes/rotas/';
   
@@ -79,14 +132,14 @@ class ApiEndpoints {
   String rotaAtualizarOrdem(int id) => 
     '$_baseUrl/api/fretes/rotas/$id/atualizar-ordem/';
   
-  // === CLIENTES (SistemaEG3) ===
+  // === CLIENTES ===
   /// Listar clientes
   String get clientes => '$_baseUrl/api/fretes/clientes/';
   
   /// Detalhes de um cliente
   String clienteDetail(int id) => '$_baseUrl/api/fretes/clientes/$id/';
   
-  // === RELATÓRIOS (SistemaEG3) ===
+  // === RELATÓRIOS ===
   /// Dashboard de estatísticas
   String get dashboardStats => '$_baseUrl/api/relatorios/dashboard/stats/';
   
@@ -101,7 +154,7 @@ class ApiEndpoints {
   String get indicadoresPerformance => 
     '$_baseUrl/api/relatorios/indicadores-performance/';
   
-  // === RASTREAMENTO GPS (SistemaEG3 - APIs Migradas) ===
+  // === RASTREAMENTO GPS ===
   /// Enviar localização GPS por CPF
   String get rastreioSendLocation => 
     '$_baseUrl/api/usuarios/motorista/enviar-localizacao/';

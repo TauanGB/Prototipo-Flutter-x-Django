@@ -28,6 +28,7 @@ Rota _$RotaFromJson(Map<String, dynamic> json) => Rota(
   totalFretes: (json['total_fretes'] as num).toInt(),
   fretesConcluidos: (json['fretes_concluidos'] as num).toInt(),
   progressoPercentual: (json['progresso_percentual'] as num).toDouble(),
+  veiculoPlaca: json['veiculo_placa'] as String?,
 );
 
 Map<String, dynamic> _$RotaToJson(Rota instance) => <String, dynamic>{
@@ -46,4 +47,5 @@ Map<String, dynamic> _$RotaToJson(Rota instance) => <String, dynamic>{
   'total_fretes': instance.totalFretes,
   'fretes_concluidos': instance.fretesConcluidos,
   'progresso_percentual': instance.progressoPercentual,
+  'veiculo_placa': instance.veiculoPlaca,
 };

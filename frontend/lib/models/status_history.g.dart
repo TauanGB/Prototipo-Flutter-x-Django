@@ -9,25 +9,23 @@ part of 'status_history.dart';
 StatusHistory _$StatusHistoryFromJson(Map<String, dynamic> json) =>
     StatusHistory(
       id: (json['id'] as num).toInt(),
-      statusAnterior: json['status_anterior'] as String?,
-      statusAnteriorDisplay: json['status_anterior_display'] as String?,
-      statusNovo: json['status_novo'] as String,
-      statusNovoDisplay: json['status_novo_display'] as String,
-      usuario: (json['usuario'] as num?)?.toInt(),
-      usuarioNome: json['usuario_nome'] as String?,
-      dataAlteracao: DateTime.parse(json['data_alteracao'] as String),
+      frete: (json['frete'] as num).toInt(),
+      status: json['status'] as String,
+      statusDisplay: json['status_display'] as String,
+      dataMudanca: DateTime.parse(json['data_mudanca'] as String),
+      usuario: json['usuario'] as String?,
       observacoes: json['observacoes'] as String?,
+      dataCriacao: DateTime.parse(json['data_criacao'] as String),
     );
 
 Map<String, dynamic> _$StatusHistoryToJson(StatusHistory instance) =>
     <String, dynamic>{
       'id': instance.id,
-      'status_anterior': instance.statusAnterior,
-      'status_anterior_display': instance.statusAnteriorDisplay,
-      'status_novo': instance.statusNovo,
-      'status_novo_display': instance.statusNovoDisplay,
+      'frete': instance.frete,
+      'status': instance.status,
+      'status_display': instance.statusDisplay,
+      'data_mudanca': instance.dataMudanca.toIso8601String(),
       'usuario': instance.usuario,
-      'usuario_nome': instance.usuarioNome,
-      'data_alteracao': instance.dataAlteracao.toIso8601String(),
       'observacoes': instance.observacoes,
+      'data_criacao': instance.dataCriacao.toIso8601String(),
     };

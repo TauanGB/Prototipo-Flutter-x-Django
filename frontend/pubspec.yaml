@@ -1,5 +1,5 @@
-name: frontend
-description: "Sistema EG3 - App para Motoristas (Android e iOS)"
+name: app_motorista
+description: "App Motorista - Sistema de Gestão de Fretes para Android e iOS"
 # Aplicativo exclusivo para plataformas móveis Android e iOS
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 

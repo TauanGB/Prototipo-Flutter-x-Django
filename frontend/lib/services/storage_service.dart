@@ -14,6 +14,10 @@ class StorageService {
   static const String _keyCpf = 'driver_cpf';
   static const String _keyLastLogin = 'last_login';
   
+  // Novas chaves para DriverSession e SyncState
+  static const String _keyDriverSession = 'driver_session';
+  static const String _keySyncState = 'sync_state';
+  
   // === TOKEN DE AUTENTICAÇÃO ===
   /// Salva token de autenticação
   static Future<void> saveAuthToken(String token) async {
@@ -190,16 +194,6 @@ class StorageService {
     return null;
   }
   
-  /// Limpa todos os dados (logout completo)
-  static Future<void> clearAll() async {
-    await clearAuthToken();
-    await clearUserData();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_keyCpf);
-    await prefs.remove(_keyLastLogin);
-    developer.log('🧹 Todos os dados removidos', name: 'StorageService');
-  }
-  
   /// Obtém informações de debug
   static Future<Map<String, dynamic>> getDebugInfo() async {
     final prefs = await SharedPreferences.getInstance();
@@ -244,6 +238,93 @@ class StorageService {
   static Future<void> remove(String key) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(key);
+  }
+
+  // === DRIVER SESSION ===
+  /// Salva a sessão do motorista (DriverSession)
+  /// Usa SharedPreferences para persistência
+  static Future<void> saveDriverSession(Map<String, dynamic> sessionData) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyDriverSession, json.encode(sessionData));
+    developer.log('💾 DriverSession salva com sucesso', name: 'StorageService');
+  }
+
+  /// Carrega a sessão do motorista (DriverSession)
+  /// Retorna null se não existir
+  static Future<Map<String, dynamic>?> loadDriverSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    final sessionJson = prefs.getString(_keyDriverSession);
+    
+    if (sessionJson != null) {
+      try {
+        final session = json.decode(sessionJson) as Map<String, dynamic>;
+        developer.log('✅ DriverSession carregada', name: 'StorageService');
+        return session;
+      } catch (e) {
+        developer.log('❌ Erro ao decodificar DriverSession: $e', name: 'StorageService');
+        return null;
+      }
+    }
+    
+    developer.log('ℹ️ DriverSession não encontrada', name: 'StorageService');
+    return null;
+  }
+
+  /// Limpa a sessão do motorista
+  static Future<void> clearDriverSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyDriverSession);
+    developer.log('🧹 DriverSession removida', name: 'StorageService');
+  }
+
+  // === SYNC STATE ===
+  /// Salva o SyncState (estado operacional offline)
+  /// Usa SharedPreferences para persistência
+  static Future<void> saveSyncState(Map<String, dynamic> syncStateData) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keySyncState, json.encode(syncStateData));
+    developer.log('💾 SyncState salvo com sucesso', name: 'StorageService');
+  }
+
+  /// Carrega o SyncState
+  /// Retorna null se não existir
+  static Future<Map<String, dynamic>?> loadSyncState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final syncStateJson = prefs.getString(_keySyncState);
+    
+    if (syncStateJson != null) {
+      try {
+        final syncState = json.decode(syncStateJson) as Map<String, dynamic>;
+        developer.log('✅ SyncState carregado', name: 'StorageService');
+        return syncState;
+      } catch (e) {
+        developer.log('❌ Erro ao decodificar SyncState: $e', name: 'StorageService');
+        return null;
+      }
+    }
+    
+    developer.log('ℹ️ SyncState não encontrado', name: 'StorageService');
+    return null;
+  }
+
+  /// Limpa o SyncState
+  static Future<void> clearSyncState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keySyncState);
+    developer.log('🧹 SyncState removido', name: 'StorageService');
+  }
+
+  /// Limpa todos os dados (logout completo)
+  /// Agora também limpa DriverSession e SyncState
+  static Future<void> clearAll() async {
+    await clearAuthToken();
+    await clearUserData();
+    await clearDriverSession();
+    await clearSyncState();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyCpf);
+    await prefs.remove(_keyLastLogin);
+    developer.log('🧹 Todos os dados removidos', name: 'StorageService');
   }
 }
 

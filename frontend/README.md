@@ -1,4 +1,4 @@
-# Sistema EG3 - App para Motoristas
+# App Motorista - Sistema de Gestão de Fretes
 
 ## 📱 Plataformas Suportadas
 
@@ -16,7 +16,7 @@
 - **Rastreamento GPS**: Localização em tempo real com serviço em background
 - **Status de Fretes**: Controle de status por tipo de serviço (TRANSPORTE, MUNCK_CARGA, MUNCK_DESCARGA)
 - **Interface Simplificada**: Dashboard integrado sem telas intermediárias
-- **Sincronização**: Integração com sistema backend Django
+- **Sincronização**: Integração com sistema backend via API REST
 
 ## 🛠️ Tecnologias
 

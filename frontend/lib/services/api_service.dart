@@ -19,7 +19,7 @@ class ApiService {
   /// Envia dados de localização do motorista para a API
   static Future<Map<String, dynamic>> sendDriverLocation(DriverLocation location) async {
     try {
-      final uri = Uri.parse('${ApiConfig.baseUrl}/drivers/send_location/');
+      final uri = Uri.parse('${ApiConfig.baseUrl}/api/usuarios/motorista/enviar-localizacao/');
       log('POST para: $uri', name: 'ApiService');
       log('Dados enviados: ${location.toCreateJson()}', name: 'ApiService');
       
@@ -93,7 +93,7 @@ class ApiService {
   /// Inicia uma nova viagem
   static Future<Map<String, dynamic>> startTrip(String cpf, double latitude, double longitude) async {
     try {
-      final uri = Uri.parse('${ApiConfig.baseUrl}/drivers/start_trip/');
+      final uri = Uri.parse('${ApiConfig.baseUrl}/api/fretes/motorista/iniciar-viagem/');
       log('POST para: $uri', name: 'ApiService');
       
       final requestData = {
@@ -148,7 +148,7 @@ class ApiService {
   /// Finaliza uma viagem ativa
   static Future<Map<String, dynamic>> endTrip(String cpf, double latitude, double longitude, {double? distanceKm}) async {
     try {
-      final uri = Uri.parse('${ApiConfig.baseUrl}/drivers/end_trip/');
+      final uri = Uri.parse('${ApiConfig.baseUrl}/api/fretes/motorista/finalizar-viagem/');
       log('POST para: $uri', name: 'ApiService');
       
       final requestData = {
@@ -204,7 +204,7 @@ class ApiService {
   /// Obtém dados completos do motorista
   static Future<Map<String, dynamic>?> getDriverData(String cpf) async {
     try {
-      final uri = Uri.parse('${ApiConfig.baseUrl}/drivers/get_driver_data/?cpf=$cpf');
+      final uri = Uri.parse('${ApiConfig.baseUrl}/api/usuarios/motorista/fretes-ativos/?cpf=$cpf');
       log('GET para: $uri', name: 'ApiService');
 
       final response = await http.get(

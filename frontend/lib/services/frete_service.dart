@@ -1,9 +1,9 @@
 import 'dart:convert';
-import 'package:frontend/config/api_endpoints.dart';
-import 'package:frontend/models/frete_eg3.dart';
-import 'package:frontend/models/frete_ativo.dart';
-import 'package:frontend/services/api_client.dart';
-import 'package:frontend/services/storage_service.dart';
+import '../config/api_endpoints.dart';
+import '../models/frete_eg3.dart';
+import '../models/frete_ativo.dart';
+import 'api_client.dart';
+import 'storage_service.dart';
 import 'dart:developer' as developer;
 
 /// Serviço de fretes integrado com SistemaEG3

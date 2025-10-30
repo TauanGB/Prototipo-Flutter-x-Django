@@ -30,6 +30,8 @@ class Rota {
   final int fretesConcluidos;
   @JsonKey(name: 'progresso_percentual')
   final double progressoPercentual;
+  @JsonKey(name: 'veiculo_placa')
+  final String? veiculoPlaca;
 
   const Rota({
     required this.id,
@@ -47,6 +49,7 @@ class Rota {
     required this.totalFretes,
     required this.fretesConcluidos,
     required this.progressoPercentual,
+    this.veiculoPlaca,
   });
 
   factory Rota.fromJson(Map<String, dynamic> json) => _$RotaFromJson(json);

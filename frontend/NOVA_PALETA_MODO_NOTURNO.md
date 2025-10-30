@@ -75,3 +75,6 @@ A nova paleta é compatível com:
 - iOS (iOS 12.0+)
 - Material Design 3
 - Flutter 3.0+
+
+
+

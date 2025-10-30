@@ -1,4 +1,4 @@
-# Sistema EG3 - App para Motoristas (Mobile)
+# App Motorista - Sistema de Gestão de Fretes (Mobile)
 
 ## 📱 Plataformas Suportadas
 
@@ -19,7 +19,7 @@
   - **MUNCK_CARGA**: Carregamento Iniciado → Carregamento Concluído
   - **MUNCK_DESCARGA**: Descarregamento Iniciado → Descarregamento Concluído
 - **Interface Simplificada**: Dashboard integrado sem telas intermediárias
-- **Sincronização**: Integração com sistema backend Django
+- **Sincronização**: Integração com sistema backend via API REST
 
 ## 🛠️ Tecnologias Mobile
 

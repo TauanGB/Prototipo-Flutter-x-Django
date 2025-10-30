@@ -56,12 +56,6 @@ FreteEG3 _$FreteEG3FromJson(Map<String, dynamic> json) => FreteEG3(
       : DateTime.parse(json['data_fim_operacao_munck'] as String),
   observacoes: json['observacoes'] as String?,
   ativo: json['ativo'] as bool,
-  materiais: (json['materiais'] as List<dynamic>?)
-      ?.map((e) => Material.fromJson(e as Map<String, dynamic>))
-      .toList(),
-  historicoStatus: (json['historico_status'] as List<dynamic>?)
-      ?.map((e) => StatusHistory.fromJson(e as Map<String, dynamic>))
-      .toList(),
   tempoCarregamentoMinutos: (json['tempo_carregamento_minutos'] as num?)
       ?.toDouble(),
   tempoTransitoMinutos: (json['tempo_transito_minutos'] as num?)?.toDouble(),
@@ -105,8 +99,6 @@ Map<String, dynamic> _$FreteEG3ToJson(FreteEG3 instance) => <String, dynamic>{
   'data_fim_operacao_munck': instance.dataFimOperacaoMunck?.toIso8601String(),
   'observacoes': instance.observacoes,
   'ativo': instance.ativo,
-  'materiais': instance.materiais,
-  'historico_status': instance.historicoStatus,
   'tempo_carregamento_minutos': instance.tempoCarregamentoMinutos,
   'tempo_transito_minutos': instance.tempoTransitoMinutos,
   'tempo_operacao_munck_minutos': instance.tempoOperacaoMunckMinutos,

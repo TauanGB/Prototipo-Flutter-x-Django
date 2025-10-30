@@ -1,0 +1,275 @@
+# =====================================================================
+# Cursor Rules - Diretrizes de desenvolvimento para App Motorista Flutter
+# =====================================================================
+
+# CONTEXTO DO PROJETO
+# - Este é um projeto Flutter standalone para motoristas
+# - O aplicativo é exclusivamente para dispositivos móveis (Android e iOS)
+# - Sistema de gestão de fretes e rotas para motoristas
+#
+# - O objetivo principal é tornar o aplicativo Flutter realmente utilizável
+#   pelos motoristas da empresa, permitindo:
+#   (a) login via CPF+senha
+#   (b) visualização da rota atual e seus fretes
+#   (c) atualização de status de cada frete em ordem
+#   (d) envio periódico de dados (incluindo localização) para o backend
+#
+# - A API backend está configurada para:
+#   https://api.motorista-app.com/
+#
+#   IMPORTANTE:
+#   * Esta URL pode ser configurada para diferentes ambientes (dev, staging, prod)
+#   * Manter compatibilidade com contratos de API existentes
+#   * Alterações estruturais devem ser implementadas de forma backward-compatible
+#
+# - Palavras-chave essenciais:
+#   motorista_id  = identificador oficial do motorista no backend
+#   rota          = conjunto de fretes que o motorista vai cumprir
+#   frete         = uma entrega/serviço específico dentro da rota
+#   SyncState     = estado persistido localmente no app
+#   rota_ativa    = flag local dizendo se a viagem está em andamento
+#   fila_envio_pendente = fila offline de updates ainda não confirmados pelo backend
+#   SYNC_INTERVAL_SECONDS = intervalo (segundos) do serviço de sync em background
+#
+# =====================================================================
+# REGRAS GLOBAIS
+# =====================================================================
+
+rules:
+  - match: "**/*"
+    guidelines:
+      # -----------------------------------------------------------------
+      # 1. AUTENTICAÇÃO / SEGURANÇA
+      # -----------------------------------------------------------------
+      - O login do motorista DEVE ser feito com CPF + senha.
+      - O backend deve fornecer um token de sessão (ex.: Bearer/JWT), junto com motorista_id.
+      - O app Flutter DEVE armazenar esse token com segurança e enviar em TODAS as requisições autenticadas.
+      - Toda rota sensível do backend DEVE validar autorização usando motorista_id:
+        * Um motorista só pode acessar/atualizar a própria rota e os próprios fretes.
+      - Se o backend ainda não faz essa checagem, ela deve ser adicionada.
+
+      # -----------------------------------------------------------------
+      # 2. DASHBOARD DO MOTORISTA (FLUTTER)
+      # -----------------------------------------------------------------
+      - A tela principal do motorista (dashboard/home) deve seguir SEMPRE este fluxo:
+        * Antes de iniciar viagem:
+          - Exibir card "Rota atual" (rota_id e placa, se existir).
+          - Exibir a lista de TODOS os fretes daquela rota, já em ordem.
+          - Os botões de ação dos fretes DEVEM estar desabilitados/bloqueados.
+          - Deve existir um botão grande e claro: "INICIAR VIAGEM".
+        * Ao clicar "INICIAR VIAGEM":
+          - O botão "INICIAR VIAGEM" some ou fica desativado.
+          - A lista de fretes continua aparecendo.
+          - Somente o PRIMEIRO frete pendente fica habilitado para ação.
+          - A flag rota_ativa passa a true no SyncState.
+          - O serviço de background de sync periódico deve iniciar.
+        * Conforme cada frete é concluído:
+          - Liberar imediatamente o próximo frete na ordem.
+        * Quando o último frete for concluído:
+          - rota_ativa = false.
+          - O serviço de background é parado.
+
+      - A lista dos fretes DEVE aparecer ANTES da viagem começar (mas bloqueada).
+      - Não permitir que o motorista altere status de fretes futuros enquanto o frete atual não foi concluído.
+
+      # -----------------------------------------------------------------
+      # 3. MÁQUINA DE ESTADOS DE FRETE
+      # -----------------------------------------------------------------
+      - Cada frete possui um tipo de serviço. Cada tipo tem uma SEQUÊNCIA FIXA de status.
+      - NÃO é permitido:
+        * voltar status
+        * pular etapas
+        * forçar um status fora da ordem
+
+      - Tipos e sequências obrigatórias (nomes podem ser mapeados internamente, mas a lógica NÃO muda):
+        * Tipo "TRANSPORTE_CARGA":
+          1. AGUARDANDO_CARG
+          2. EM_TRANSITO
+          3. EM_DESCARGA
+          4. FINALIZADO
+
+        * Tipo "MUCK_CARGA":
+          1. CARREGAMENTO_INICIADO
+          2. CARREGAMENTO_CONCLUIDO
+
+        * Tipo "MUCK_DESCARGA":
+          1. DESCARREGAMENTO_INICIADO
+          2. DESCARREGAMENTO_CONCLUIDO
+
+      - Cada card de frete na UI deve ter APENAS UM botão de ação.
+        * Esse botão deve sempre representar "ir para o próximo status permitido".
+        * Quando o motorista clicar:
+          - Atualizar imediatamente o status local daquele frete.
+          - Se o status alcançou o fim da sequência (ex.: FINALIZADO), marcar esse frete como concluído.
+          - Desbloquear o próximo frete.
+          - Registrar esse avanço em fila_envio_pendente.
+        * Não permitir ação se aquele frete ainda não estiver "liberado" pela ordem da rota.
+
+      - O backend DEVE validar transições:
+        * Se a requisição tenta saltar status, deve devolver erro 422.
+        * Se tenta voltar status, deve devolver erro 422.
+        * Se o motorista não é dono desse frete, deve devolver 403/401.
+
+      # -----------------------------------------------------------------
+      # 4. ORDEM DOS FRETES DENTRO DA ROTA
+      # -----------------------------------------------------------------
+      - A rota do motorista é composta por múltiplos fretes, processados em sequência.
+      - O sistema deve trabalhar com a ideia de "primeiro frete atual, depois o próximo...".
+      - Se já existir no backend um campo de ordenação (ex.: ordem, sequencia), USE esse campo.
+      - Se NÃO existir ainda campo fixo de ordenação:
+        * Ordenar de forma consistente (por exemplo ID crescente, horário estimado, etc.).
+        * Mas implementar o código preparado para usar um campo de ordem explícita futuramente.
+      - Somente o frete "atual" (o primeiro não concluído) pode ter botão habilitado.
+
+      # -----------------------------------------------------------------
+      # 5. ESTADO LOCAL NO APP (SyncState)
+      # -----------------------------------------------------------------
+      - O app Flutter DEVE manter um estado local persistido chamado algo como SyncState.
+        * Antes de reinventar, procurar se já existe algum padrão de persistência no projeto
+          (SharedPreferences, Hive, SQLite, arquivo JSON local). Reutilizar se existir.
+        * Se não houver padrão, usar persistência simples via arquivo JSON local usando path_provider.
+
+      - SyncState PRECISA conter, no mínimo:
+        * motorista_id
+        * rota_id
+        * rota_ativa (bool)
+        * ultima_atualizacao (timestamp)
+        * localizacaoatual { latitude, longitude }
+        * fretes[]:
+            - frete_id
+            - statusatual
+            - ordem_na_rota
+            - concluido (bool)
+        * fila_envio_pendente[]:
+            - timestamp
+            - payload descrevendo cada atualização de status que ainda não foi confirmada no backend
+
+      - Toda vez que o motorista clicar no botão de avançar status:
+        * Atualizar SyncState imediatamente (status do frete, concluir se for o último status, liberar o próximo).
+        * Adicionar um item correspondente na fila_envio_pendente.
+        * Persistir SyncState em disco imediatamente.
+
+      # -----------------------------------------------------------------
+      # 6. SERVIÇO DE BACKGROUND (SYNC PERIÓDICO)
+      # -----------------------------------------------------------------
+      - O aplicativo Flutter DEVE ter um serviço de background que envia periodicamente
+        as informações atuais para o backend.
+      - Prioridade: Android. iOS deve ter a melhor implementação possível (background fetch/task),
+        sabendo que iOS pode não rodar a cada 30s exato.
+      - O serviço em background:
+        * Inicia quando o motorista aperta "INICIAR VIAGEM".
+        * Continua rodando enquanto rota_ativa == true.
+        * Para quando todos os fretes forem concluídos ou quando a rota terminar
+          (ao parar, marcar rota_ativa=false em SyncState e interromper o loop de sync).
+
+      - Intervalo de sync:
+        * O intervalo padrão é 30 segundos.
+        * CRIAR e USAR uma constante global no Flutter:
+          const int SYNC_INTERVAL_SECONDS = 30;
+        * Nunca hardcodar "30" em vários lugares. Sempre usar a constante.
+
+      - A cada execução do serviço de background:
+        * Ler o SyncState persistido.
+        * Atualizar localizacaoatual com latitude/longitude atuais.
+        * Montar o payload de sync contendo:
+          - motorista_id
+          - rota_id
+          - localizacaoatual (lat, lon)
+          - status atual de cada frete
+          - fila_envio_pendente (eventos ainda não confirmados)
+
+        * Enviar para o backend autenticado (Bearer token).
+        * Caso sucesso:
+          - Remover da fila_envio_pendente todos os eventos que o backend confirmou.
+        * Caso erro de rede / HTTP 500:
+          - NÃO descartar nada. Manter os eventos e tentar novamente no próximo ciclo.
+        * Caso HTTP 401 (token expirado):
+          - Se houver refresh token implementado, tentar renovar.
+          - Se não houver, parar o serviço e exigir login de novo do motorista.
+        * Caso erro de validação específico (422) em algum evento:
+          - Remover apenas aquele evento inválido da fila_envio_pendente.
+          - Manter o resto.
+
+      - O serviço DEVE capturar latitude e longitude atuais.
+        * Configurar permissões de localização foreground+background no AndroidManifest.
+        * Configurar permissões equivalentes no Info.plist (iOS).
+
+      # -----------------------------------------------------------------
+      # 7. ENDPOINTS DO BACKEND
+      # -----------------------------------------------------------------
+      - Antes de criar novas rotas, VERIFICAR se elas já existem no código do backend
+        OU já estão acessíveis na produção em:
+          https://api.motorista-app.com/
+        (Ex.: rota de login, rota que retorna a rota atual do motorista, etc.)
+
+      - Endpoints que DEVEM existir ao final do desenvolvimento:
+        1. Login do motorista (CPF + senha)
+           - Request: { cpf, senha }
+           - Response: { access_token, motorista_id, ... }
+           - Gera token que o Flutter vai usar como Bearer.
+
+        2. Obter rota atual do motorista
+           - Retorna rota_id, dados do veículo se houver,
+             e a lista de fretes ordenados (com status atual e tipo de serviço).
+
+        3. Atualizar status de UM frete
+           - Recebe o próximo status.
+           - Valida motorista_id, valida a sequência de status e proíbe retrocesso.
+
+        4. Sync periódico
+           - Exemplo sugerido:
+             POST /api/drivers/{motorista_id}/routes/{rota_id}/sync
+           - Corpo deve aceitar:
+             ultima_atualizacao,
+             localizacaoatual (lat/lon),
+             estado atual dos fretes,
+             fila_envio_pendente (eventos pendentes).
+           - Deve:
+             * Salvar localização do motorista
+             * Aplicar mudanças válidas de status (seguindo a máquina de estados)
+             * Responder quais eventos foram aceitos, para limpar fila_envio_pendente no app
+
+      - TODAS as rotas acima DEVEM exigir autenticação Bearer
+        e DEVEM checar se o motorista autenticado realmente é dono daquela rota/frete.
+
+      # -----------------------------------------------------------------
+      # 8. COMPATIBILIDADE COM PRODUÇÃO
+      # -----------------------------------------------------------------
+      - Nunca assumir que você pode "quebrar" campos que já existem e que o app web / clientes atuais usam.
+      - Adições são permitidas (novos campos, novas rotas).
+      - Mudanças destrutivas em rotas existentes DEVEM ser evitadas.
+      - Se precisar mudar contratos já em uso, criar uma rota nova com versão (ex.: /api/v2/...),
+        ao invés de alterar silenciosamente uma rota existente que já está servindo produção.
+
+      # -----------------------------------------------------------------
+      # 9. CONVENÇÕES IMPORTANTES
+      # -----------------------------------------------------------------
+      - motorista_id é a chave de autoridade. Sempre trabalhar com esse campo.
+      - rota_ativa controla se o serviço em background deve rodar.
+      - SyncState é a fonte de verdade local para:
+        * status dos fretes que o motorista enxerga
+        * qual frete está liberado
+        * dados que precisam ser enviados para o backend
+      - Qualquer ação de UI que altere status operacional (ex.: avançar status do frete)
+        DEVE atualizar o SyncState imediatamente e persistir em disco,
+        e NÃO deve depender de "esperar o servidor responder" para mostrar o novo status.
+
+      - Quando o último frete da rota estiver concluído:
+        * marcar rota_ativa=false
+        * parar o serviço de background
+        * não continuar tentando sync
+
+      # -----------------------------------------------------------------
+      # 10. LOGGING / DEBUG
+      # -----------------------------------------------------------------
+      - Incluir logs (debugPrint/print no Flutter e logs no backend) para:
+        * login do motorista
+        * clique em "INICIAR VIAGEM"
+        * cada mudança de status de frete
+        * cada tentativa de sync em background
+        * erros de API
+      - Esses logs são importantes para teste em campo, não remover sem substituição adequada.
+
+# =====================================================================
+# FIM DAS REGRAS
+# =====================================================================
