@@ -5,7 +5,7 @@
 /// - iOS (iOS 12.0+)
 class AppConfig {
   // URL base da API - configurável para diferentes ambientes
-  static const String _baseUrl = 'http://10.0.2.2:8000';
+  static const String _baseUrl = 'https://sistemaeg3-production.up.railway.app';
   static String get apiBaseUrl => _baseUrl;
 
   // Configurações do app mobile
