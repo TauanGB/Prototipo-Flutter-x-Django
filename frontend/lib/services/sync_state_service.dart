@@ -13,15 +13,28 @@ import 'dart:developer' as developer;
 class SyncStateService {
   /// Faz merge não-regressivo entre o estado local e a resposta remota de rota
   ///
-  /// Regra de não-regressão (status_rota):
-  /// - local EM_EXECUCAO x remoto PENDENTE => mantém local
-  /// - local CONCLUIDO x remoto EM_EXECUCAO => mantém local
-  /// - local PENDENTE x remoto EM_EXECUCAO => aceita remoto
-  /// - De modo geral, usa o "maior" entre [PENDENTE < EM_EXECUCAO < CONCLUIDO]
+  /// Regras de precedência:
+  /// - status_rota: CONCLUIDO=3, EM_EXECUCAO=2, PENDENTE=1
+  /// - status_atual: usa tabela de precedência por tipo de serviço
+  /// - Se local está mais avançado que remoto → manter local (não regredir)
+  /// - Se remoto está mais avançado → aceitar remoto
+  /// - Após merge, garante exatamente 1 EM_EXECUCAO quando rota está EM_ANDAMENTO
+  ///
+  /// Validação:
+  /// - Verifica chaves essenciais do payload remoto
+  /// - Trata null-safety
+  /// - Logs claros de decisões de merge
   static SyncState mergeRemoteRouteIntoLocal(
     SyncState local,
     Map<String, dynamic> apiResponse,
   ) {
+    developer.log('🔄 HOME-REFRESH: merge begin', name: 'SyncStateService');
+    
+    // Validar payload remoto
+    if (!_validarPayloadRemoto(apiResponse)) {
+      developer.log('⚠️ HOME-REFRESH: payload remoto inválido, mantendo local', name: 'SyncStateService');
+      return local;
+    }
     // Construir representação remota preservando motoristaId e metadados locais onde necessário
     final remoto = SyncState.fromApiRotaAtual(
       motoristaId: local.motoristaId,
@@ -34,16 +47,65 @@ class SyncStateService {
     final mapaRemotoPorId = {for (final f in remoto.fretes) f.freteId: f};
     final mapaRemotoPorOrdem = {for (final f in remoto.fretes) f.ordem: f};
 
-    int rankStatus(String s) {
+    /// Rank de status_rota: CONCLUIDO=3, EM_EXECUCAO=2, PENDENTE=1
+    int rankStatusRota(String s) {
       switch (s) {
         case 'PENDENTE':
-          return 0;
-        case 'EM_EXECUCAO':
           return 1;
-        case 'CONCLUIDO':
+        case 'EM_EXECUCAO':
           return 2;
+        case 'CONCLUIDO':
+          return 3;
         default:
-          return -1;
+          return 0;
+      }
+    }
+
+    /// Rank de status_atual por tipo de serviço
+    /// Maior valor = mais avançado
+    int rankStatusAtual(String tipoServico, String statusAtual) {
+      switch (tipoServico) {
+        case 'TRANSPORTE':
+          switch (statusAtual) {
+            case 'NAO_INICIADO':
+              return 1;
+            case 'AGUARDANDO_CARGA':
+              return 2;
+            case 'EM_TRANSITO':
+              return 3;
+            case 'EM_DESCARGA':
+              return 4;
+            case 'EM_DESCARGA_CLIENTE':
+              return 4;
+            case 'FINALIZADO':
+              return 5;
+            default:
+              return 0;
+          }
+        case 'MUNCK_CARGA':
+          switch (statusAtual) {
+            case 'CARREGAMENTO_NAO_INICIADO':
+              return 1;
+            case 'CARREGAMENTO_INICIADO':
+              return 2;
+            case 'CARREGAMENTO_CONCLUIDO':
+              return 3;
+            default:
+              return 0;
+          }
+        case 'MUNCK_DESCARGA':
+          switch (statusAtual) {
+            case 'DESCARREGAMENTO_NAO_INICIADO':
+              return 1;
+            case 'DESCARREGAMENTO_INICIADO':
+              return 2;
+            case 'DESCARREGAMENTO_CONCLUIDO':
+              return 3;
+            default:
+              return 0;
+          }
+        default:
+          return 0;
       }
     }
 
@@ -55,24 +117,47 @@ class SyncStateService {
 
       if (remotoFrete == null) {
         // Remoto não trouxe este frete: manter local como fonte da verdade
+        developer.log(
+          '🔒 NO-REGRESSION: frete ${localFrete.freteId} (ordem ${localFrete.ordem}) não encontrado no remoto, mantendo local',
+          name: 'SyncStateService',
+        );
         return localFrete;
       }
 
-      // Resolver status_rota pelo maior rank
-      final localRank = rankStatus(localFrete.statusRota);
-      final remotoRank = rankStatus(remotoFrete.statusRota);
-      final statusRotaFinal = localRank >= remotoRank
+      // Resolver status_rota pelo maior rank (sem regressão)
+      final localRankRota = rankStatusRota(localFrete.statusRota);
+      final remotoRankRota = rankStatusRota(remotoFrete.statusRota);
+      final statusRotaFinal = localRankRota >= remotoRankRota
           ? localFrete.statusRota
           : remotoFrete.statusRota;
+      
+      if (localRankRota > remotoRankRota) {
+        developer.log(
+          '🔒 NO-REGRESSION: frete ${localFrete.freteId} status_rota local (${localFrete.statusRota}) > remoto (${remotoFrete.statusRota}), mantendo local',
+          name: 'SyncStateService',
+        );
+      }
 
-      // Para demais campos (nome, cliente, destino, etc.) aplicar merge aditivo do remoto
-      // Mantendo identificadores e ordem coerentes (preferindo valores válidos)
+      // Resolver status_atual pelo maior rank (sem regressão)
+      final localRankStatus = rankStatusAtual(localFrete.tipoServico, localFrete.statusAtual);
+      final remotoRankStatus = rankStatusAtual(remotoFrete.tipoServico, remotoFrete.statusAtual);
+      final statusAtualFinal = localRankStatus >= remotoRankStatus
+          ? localFrete.statusAtual
+          : remotoFrete.statusAtual;
+      
+      if (localRankStatus > remotoRankStatus) {
+        developer.log(
+          '🔒 NO-REGRESSION: frete ${localFrete.freteId} status_atual local (${localFrete.statusAtual}) > remoto (${remotoFrete.statusAtual}), mantendo local',
+          name: 'SyncStateService',
+        );
+      }
+
+      // Para demais campos, aplicar merge aditivo do remoto (preferindo valores válidos)
       return localFrete.copyWith(
         freteId: localFrete.freteId != -1 ? localFrete.freteId : remotoFrete.freteId,
-        ordem: localFrete.ordem, // manter ordem local (já está consistente)
+        ordem: localFrete.ordem, // manter ordem local
         statusRota: statusRotaFinal,
-        // statusAtual: manter local por segurança a menos que remoto esteja mais avançado em status_rota
-        statusAtual: localRank >= remotoRank ? localFrete.statusAtual : remotoFrete.statusAtual,
+        statusAtual: statusAtualFinal,
         tipoServico: remotoFrete.tipoServico,
         origem: remotoFrete.origem ?? localFrete.origem,
         destino: remotoFrete.destino ?? localFrete.destino,
@@ -91,20 +176,142 @@ class SyncStateService {
 
     // Se o remoto trouxe fretes adicionais (não existentes localmente), anexar
     for (final fRem in remoto.fretes) {
-      final existe = fretesMesclados.any((f) => f.freteId == fRem.freteId || f.ordem == fRem.ordem);
+      final existe = fretesMesclados.any((f) => 
+        f.freteId == fRem.freteId || (f.freteId == -1 && f.ordem == fRem.ordem)
+      );
       if (!existe) {
+        developer.log(
+          '➕ HOME-REFRESH: frete adicional do remoto adicionado: ${fRem.freteId} (ordem ${fRem.ordem})',
+          name: 'SyncStateService',
+        );
         fretesMesclados.add(fRem);
       }
     }
 
-    // rotaAtiva permanece true se local estiver ativo; caso contrário, usar remoto
-    final rotaAtivaFinal = local.rotaAtiva || remoto.rotaAtiva;
+    // Ordenar fretes por ordem
+    fretesMesclados.sort((a, b) => a.ordem.compareTo(b.ordem));
 
-    return local.copyWith(
+    // Resolver rotaAtiva: se local está ativo, manter; caso contrário, usar remoto
+    // Mas se local indica rotaAtiva=true e remoto ainda está atrasado (ex.: PLANEJADA), manter local
+    final statusRemoto = apiResponse['status'] as String?;
+    final rotaAtivaRemota = statusRemoto == 'EM_ANDAMENTO';
+    
+    bool rotaAtivaFinal;
+    if (local.rotaAtiva && !rotaAtivaRemota) {
+      // Local ativo mas remoto ainda não convergiu: manter local (backend deve convergir via sync)
+      rotaAtivaFinal = true;
+      developer.log(
+        '🔒 NO-REGRESSION: rota local ativa mas remoto ainda PLANEJADA, mantendo local ativa',
+        name: 'SyncStateService',
+      );
+    } else {
+      rotaAtivaFinal = local.rotaAtiva || rotaAtivaRemota;
+    }
+
+    // Criar estado intermediário
+    final estadoIntermediario = local.copyWith(
       rotaId: remoto.rotaId ?? local.rotaId,
       rotaAtiva: rotaAtivaFinal,
       fretes: fretesMesclados,
       ultimaAtualizacao: DateTime.now().toIso8601String(),
+    );
+
+    // Garantir exatamente 1 EM_EXECUCAO quando rota está EM_ANDAMENTO
+    final estadoFinal = _garantirExatamenteUmEmExecucao(estadoIntermediario);
+
+    developer.log(
+      '✅ HOME-REFRESH: merge end - rota_id=${estadoFinal.rotaId}, rota_ativa=${estadoFinal.rotaAtiva}, fretes=${estadoFinal.fretes.length}, em_execucao=${estadoFinal.fretes.where((f) => f.statusRota == 'EM_EXECUCAO').length}',
+      name: 'SyncStateService',
+    );
+
+    return estadoFinal;
+  }
+
+  /// Valida chaves essenciais do payload remoto
+  static bool _validarPayloadRemoto(Map<String, dynamic> apiResponse) {
+    // Validar estrutura básica (pode não ter rota_id se não há rota)
+    if (apiResponse['rota_id'] != null && apiResponse['rota_id'] is! int && apiResponse['rota_id'] is! num) {
+      developer.log('⚠️ Payload inválido: rota_id deve ser int ou null', name: 'SyncStateService');
+      return false;
+    }
+    
+    // Validar fretes_rota se existir
+    if (apiResponse.containsKey('fretes_rota') && apiResponse['fretes_rota'] is! List) {
+      developer.log('⚠️ Payload inválido: fretes_rota deve ser List ou não existir', name: 'SyncStateService');
+      return false;
+    }
+
+    return true;
+  }
+
+  /// Garante exatamente 1 frete EM_EXECUCAO quando rota está EM_ANDAMENTO
+  /// Se nenhum estiver em execução: ativa o primeiro não concluído
+  /// Se todos concluídos: rota fica CONCLUIDA
+  static SyncState _garantirExatamenteUmEmExecucao(SyncState state) {
+    if (!state.rotaAtiva || state.fretes.isEmpty) {
+      return state;
+    }
+
+    final fretesEmExecucao = state.fretes.where((f) => f.statusRota == 'EM_EXECUCAO').toList();
+    
+    // Já tem exatamente 1: perfeito
+    if (fretesEmExecucao.length == 1) {
+      return state;
+    }
+
+    // Tem 0 ou mais de 1: corrigir
+    final fretesOrdenados = List<SyncFrete>.from(state.fretes)
+      ..sort((a, b) => a.ordem.compareTo(b.ordem));
+
+    final novosFretes = fretesOrdenados.map((f) {
+      if (f.statusRota == 'CONCLUIDO') {
+        return f; // manter concluído
+      }
+      
+      // Se já tinha mais de 1 EM_EXECUCAO, manter apenas o primeiro (menor ordem)
+      if (fretesEmExecucao.length > 1) {
+        final primeiroEmExecucao = fretesEmExecucao.first;
+        if (f.freteId == primeiroEmExecucao.freteId) {
+          return f.copyWith(statusRota: 'EM_EXECUCAO');
+        } else {
+          return f.copyWith(statusRota: 'PENDENTE');
+        }
+      }
+      
+      // Se tinha 0, ativar o primeiro não concluído
+      if (fretesEmExecucao.isEmpty) {
+        final primeiroNaoConcluido = fretesOrdenados.firstWhere(
+          (f) => f.statusRota != 'CONCLUIDO',
+          orElse: () => fretesOrdenados.first,
+        );
+        if (f.freteId == primeiroNaoConcluido.freteId) {
+          developer.log(
+            '🔧 HOME-REFRESH: ativando primeiro frete ${f.freteId} (ordem ${f.ordem}) como EM_EXECUCAO',
+            name: 'SyncStateService',
+          );
+          return f.copyWith(statusRota: 'EM_EXECUCAO');
+        } else {
+          return f.copyWith(statusRota: 'PENDENTE');
+        }
+      }
+      
+      return f;
+    }).toList();
+
+    // Verificar se todos estão concluídos
+    final todosConcluidos = novosFretes.every((f) => f.statusRota == 'CONCLUIDO');
+    final novaRotaAtiva = todosConcluidos ? false : state.rotaAtiva;
+
+    if (todosConcluidos && state.rotaAtiva) {
+      developer.log(
+        '🏁 HOME-REFRESH: todos os fretes concluídos, desativando rota',
+        name: 'SyncStateService',
+      );
+    }
+
+    return state.copyWith(
+      fretes: novosFretes,
+      rotaAtiva: novaRotaAtiva,
     );
   }
   /// Ativa a rota localmente e libera o primeiro frete não concluído
@@ -127,9 +334,14 @@ class SyncStateService {
     final fretesOrdenados = List<SyncFrete>.from(state.fretes)
       ..sort((a, b) => a.ordem.compareTo(b.ordem));
 
+    // Verificar se há fretes
+    if (fretesOrdenados.isEmpty) {
+      throw StateError('Sem fretes na rota');
+    }
+
     final primeiroNaoConcluido = fretesOrdenados.firstWhere(
       (f) => f.statusRota != 'CONCLUIDO',
-      orElse: () => fretesOrdenados.isNotEmpty ? fretesOrdenados.first : (throw StateError('Sem fretes na rota')),
+      orElse: () => fretesOrdenados.first, // Se todos estão concluídos, retornar o primeiro (permite reabrir rota)
     );
 
     // Aplicar regras de status_rota

@@ -5,6 +5,7 @@ import 'config/app_theme.dart';
 import 'screens/main_navigation_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/storage_service.dart';
+import 'services/background_sync_service.dart';
 import 'widgets/splash_screen.dart';
 import 'dart:developer' as developer;
 
@@ -20,6 +21,9 @@ Future<void> main() async {
   
   // Solicita permissões necessárias para dispositivos móveis
   await _requestPermissions();
+  
+  // Inicializa notificações para o serviço de background
+  await BackgroundSyncService.initializeNotifications();
   
   runApp(const MyApp());
 }

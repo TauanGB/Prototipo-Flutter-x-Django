@@ -46,6 +46,7 @@ class _HomeMotoristaPageState extends State<HomeMotoristaPage> with WidgetsBindi
   bool _isLoading = false;
   bool _isInitializing = true;
   String? _errorMessage;
+  bool _isRefreshing = false; // Controle de debounce para refresh
 
   @override
   void initState() {
@@ -63,14 +64,13 @@ class _HomeMotoristaPageState extends State<HomeMotoristaPage> with WidgetsBindi
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
     if (state == AppLifecycleState.resumed) {
-      // Reiniciar serviço se necessário ao voltar para a Home
+      // Verificar e reiniciar serviço se necessário ao voltar para a Home
+      developer.log('🔍 HomeMotoristaPage: app resumed - verificando serviço', name: 'HomeMotoristaPage');
       try {
-        final s = await SyncStateUtils.loadSyncState();
-        final deveRodar = s != null && (s.rotaAtiva || s.freteAtual != null);
-        if (deveRodar && !BackgroundSyncService.isRunning) {
-          await BackgroundSyncService.startBackgroundSyncLoop();
-        }
-      } catch (_) {}
+        await BackgroundSyncService.startIfNeeded();
+      } catch (e) {
+        developer.log('⚠️ Erro ao verificar serviço ao resume: $e', name: 'HomeMotoristaPage');
+      }
     }
   }
 
@@ -104,9 +104,22 @@ class _HomeMotoristaPageState extends State<HomeMotoristaPage> with WidgetsBindi
         state = await SyncStateUtils.loadSyncState();
       }
 
-      // 4. Se rota ativa OU há frete em execução, iniciar/reiniciar sync em background
-      if (state != null && (state.rotaAtiva || state.freteAtual != null) && !BackgroundSyncService.isRunning) {
-        await BackgroundSyncService.startBackgroundSyncLoop();
+      // 4. Se rota ativa OU há frete em execução, garantir que o serviço está rodando
+      if (state != null && (state.rotaAtiva || state.freteAtual != null)) {
+        developer.log(
+          '🔍 HomeMotoristaPage: rota ativa detectada (rotaAtiva=${state.rotaAtiva}, freteAtual=${state.freteAtual?.freteId}) - verificando serviço',
+          name: 'HomeMotoristaPage',
+        );
+        await BackgroundSyncService.startIfNeeded();
+      } else if (state != null) {
+        developer.log(
+          '🔍 HomeMotoristaPage: rota inativa - parando serviço se estiver rodando',
+          name: 'HomeMotoristaPage',
+        );
+        // Verificar se precisa parar o serviço (caso contrário)
+        if (BackgroundSyncService.isRunning) {
+          await BackgroundSyncService.stopBackgroundSyncLoop(reason: 'rota_inativa');
+        }
       }
 
       // 5. Atualizar com status do backend quando rotaAtiva=false (evita "downgrade" local)
@@ -130,52 +143,6 @@ class _HomeMotoristaPageState extends State<HomeMotoristaPage> with WidgetsBindi
         _errorMessage = 'Erro ao carregar dados: $e';
         _isInitializing = false;
       });
-    }
-  }
-
-  /// Sincroniza rota atual do servidor
-  Future<void> _sincronizarRota() async {
-    try {
-      await RotaService.sincronizarRotaAtualDoServidor();
-    } on UnauthorizedException {
-      developer.log('🔒 Token inválido - parando sync', name: 'HomeMotoristaPage');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Sessão expirada. Faça login novamente.'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 5),
-          ),
-        );
-        // Parar sync em background
-        await BackgroundSyncService.stopBackgroundSyncLoop();
-        // Navegar para login
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const LoginScreen()),
-        );
-      }
-    } on ConflictException catch (e) {
-      developer.log('❌ 409 - Inconsistência de dados: $e', name: 'HomeMotoristaPage');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Inconsistência de dados (rotas/fretes). Contate o gestor.'),
-            backgroundColor: Colors.orange,
-            duration: Duration(seconds: 8),
-          ),
-        );
-      }
-    } catch (e) {
-      developer.log('❌ Erro ao sincronizar rota: $e', name: 'HomeMotoristaPage');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Erro ao sincronizar: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      rethrow;
     }
   }
 
@@ -221,72 +188,211 @@ class _HomeMotoristaPageState extends State<HomeMotoristaPage> with WidgetsBindi
   }
 
   /// Handler para pull-to-refresh
+  /// 
+  /// Fluxo:
+  /// 1. Debounce para evitar múltiplos refresh seguidos
+  /// 2. Carregar DriverSession e SyncState do storage
+  /// 3. Chamar API atual (getRotaAtual ou incremental)
+  /// 4. Validar payload remoto
+  /// 5. Mesclar remoto → local via merge não-regressivo
+  /// 6. Persistir novo SyncState
+  /// 7. Atualizar UI
+  /// 8. Iniciar/parar serviço de background conforme resultado
+  /// 9. Tratamento completo de erros (401, 409, timeout)
   Future<void> _onRefresh() async {
+    // Debounce: evitar múltiplos refresh seguidos
+    if (_isRefreshing) {
+      developer.log('⏭️ HOME-REFRESH: ignorado (já em execução)', name: 'HomeMotoristaPage');
+      return;
+    }
+
+    _isRefreshing = true;
+    developer.log('🔄 HOME-REFRESH: begin', name: 'HomeMotoristaPage');
+
     try {
-      final state = await SyncStateUtils.loadSyncState();
-
-      // Se rota ativa, proteger contra regressão: confirmar com o usuário
-      if (state != null && (state.rotaAtiva || state.freteAtual != null)) {
-        final confirmar = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Atualizar agora?'),
-            content: const Text(
-              'Você está com uma rota em andamento. Se atualizar agora, os dados locais podem ser sobrescritos. Deseja mesmo atualizar?'
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Cancelar'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Atualizar'),
-              ),
-            ],
-          ),
-        );
-
-        if (confirmar != true) {
-          return; // usuário desistiu
+      // 1. Carregar DriverSession e SyncState do storage
+      final session = await SyncStateUtils.loadDriverSession();
+      if (session == null || !session.isValid) {
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => const LoginScreen()),
+          );
         }
+        return;
+      }
 
-        // Buscar remoto e aplicar merge não-regressivo
-        final remoto = await RotaService.getRotaAtual();
-        final mesclado = SyncStateService.mergeRemoteRouteIntoLocal(state, remoto);
-        await SyncStateUtils.saveSyncState(mesclado);
+      final stateLocal = await SyncStateUtils.loadSyncState();
 
-        if (!mounted) return;
-        setState(() {
-          _syncState = mesclado;
-        });
+      // 2. Chamar API atual (getRotaAtual para rota ativa, incremental para sem rota)
+      Map<String, dynamic>? apiResponse;
+      bool rotaAtivaLocal = stateLocal?.rotaAtiva ?? false;
+      bool temFreteEmExecucao = stateLocal?.freteAtual != null;
 
+      if (rotaAtivaLocal || temFreteEmExecucao) {
+        // Rota ativa: usar getRotaAtual e aplicar merge não-regressivo
+        try {
+          apiResponse = await RotaService.getRotaAtual();
+          
+          // Se API retornar has_rota=false por atraso → NÃO desligue a rota local
+          // Manter e tentar novamente no próximo ciclo
+          if (apiResponse['rota_id'] == null && rotaAtivaLocal) {
+            developer.log(
+              '⚠️ HOME-REFRESH: API retornou sem rota mas local está ativa, mantendo local',
+              name: 'HomeMotoristaPage',
+            );
+            // Manter estado local, apenas atualizar UI
+            if (!mounted) return;
+            setState(() {
+              _syncState = stateLocal;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Rota ativa localmente. Aguardando sincronização...'),
+                backgroundColor: Colors.orange,
+                duration: Duration(seconds: 3),
+              ),
+            );
+            return;
+          }
+        } on UnauthorizedException {
+          // 401 (token expirado): parar background, exibir aviso, navegar para login
+          developer.log('🔒 HOME-REFRESH: 401 - token expirado', name: 'HomeMotoristaPage');
+          await BackgroundSyncService.stopBackgroundSyncLoop(reason: '401');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Sessão expirada. Faça login novamente.'),
+                backgroundColor: Colors.red,
+                duration: Duration(seconds: 4),
+              ),
+            );
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (context) => const LoginScreen()),
+            );
+          }
+          return;
+        } on ConflictException catch (e) {
+          // 409 (rota inconsistente): não regredir local; exibir banner
+          developer.log('⚠️ HOME-REFRESH: 409 - rota inconsistente', name: 'HomeMotoristaPage');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Rota inconsistente. Contate o gestor. ${e.toString()}'),
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 6),
+              ),
+            );
+            // Manter estado local
+            setState(() {
+              _syncState = stateLocal;
+            });
+          }
+          return;
+        } catch (e) {
+          // Timeout/rede: manter estado local e permitir operação offline
+          developer.log('⚠️ HOME-REFRESH: erro de rede/timeout: $e', name: 'HomeMotoristaPage');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Erro de conexão. Mantendo dados locais.'),
+                backgroundColor: Colors.orange,
+                duration: Duration(seconds: 3),
+              ),
+            );
+            setState(() {
+              _syncState = stateLocal;
+            });
+          }
+          return;
+        }
+      } else {
+        // Sem rota ativa: usar fluxo incremental
+        try {
+          await _carregarIncremental();
+          final stateFinal = await SyncStateUtils.loadSyncState();
+          if (!mounted) return;
+          setState(() {
+            _syncState = stateFinal;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Lista atualizada'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
+            ),
+          );
+          return;
+        } catch (e) {
+          // Erro no incremental: tratar igual
+          developer.log('❌ HOME-REFRESH: erro no incremental: $e', name: 'HomeMotoristaPage');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Erro ao atualizar: $e'),
+                backgroundColor: Colors.red,
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          }
+          return;
+        }
+      }
+
+      // 3. Validar payload (já feito no merge, mas garantir que temos resposta)
+      // apiResponse não pode ser null aqui devido ao fluxo acima (já foi atribuído no bloco try acima)
+
+      // 4. Mesclar remoto → local via função pura (não-regressiva)
+      final stateMesclado = SyncStateService.mergeRemoteRouteIntoLocal(
+        stateLocal ?? SyncState.empty(motoristaId: session.motoristaId),
+        apiResponse,
+      );
+
+      // 5. Persistir novo SyncState
+      await SyncStateUtils.saveSyncState(stateMesclado);
+
+      // 6. Atualizar UI
+      if (!mounted) return;
+      setState(() {
+        _syncState = stateMesclado;
+      });
+
+      // 7. Se rota estiver ativa após merge → garantir start do serviço de background
+      // Caso contrário, stop
+      if (stateMesclado.rotaAtiva || stateMesclado.freteAtual != null) {
+        developer.log('🚀 HOME-REFRESH: rota ativa após merge, garantindo BG-SYNC start', name: 'HomeMotoristaPage');
+        await BackgroundSyncService.startIfNeeded();
+      } else {
+        developer.log('🛑 HOME-REFRESH: rota inativa após merge, parando BG-SYNC se necessário', name: 'HomeMotoristaPage');
+        if (BackgroundSyncService.isRunning) {
+          await BackgroundSyncService.stopBackgroundSyncLoop(reason: 'rota_concluida');
+        }
+      }
+
+      // Mensagem de sucesso
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Lista atualizada (proteção ativa)'),
+            content: Text('Lista atualizada'),
             backgroundColor: Colors.green,
             duration: Duration(seconds: 2),
           ),
         );
-        return;
       }
 
-      // Sem rota ativa: fluxo existente incremental
-      await _carregarIncremental();
-      final stateFinal = await SyncStateUtils.loadSyncState();
-      if (!mounted) return;
-      setState(() {
-        _syncState = stateFinal;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Lista atualizada'),
-          backgroundColor: Colors.green,
-          duration: Duration(seconds: 2),
-        ),
-      );
+      developer.log('✅ HOME-REFRESH: end', name: 'HomeMotoristaPage');
     } catch (e) {
-      developer.log('❌ Erro no pull-to-refresh: $e', name: 'HomeMotoristaPage');
+      developer.log('❌ HOME-REFRESH: erro: $e', name: 'HomeMotoristaPage');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao atualizar: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      _isRefreshing = false;
     }
   }
 
@@ -725,7 +831,7 @@ class _HomeMotoristaPageState extends State<HomeMotoristaPage> with WidgetsBindi
                 delegate: SliverChildBuilderDelegate(
                   (context, index) {
                     final frete = fretesOrdenados[index];
-                    return _buildFreteCard(context, frete);
+                    return _buildFreteCard(context, frete, fretesOrdenados);
                   },
                   childCount: fretesOrdenados.length,
                 ),
@@ -914,7 +1020,7 @@ class _HomeMotoristaPageState extends State<HomeMotoristaPage> with WidgetsBindi
   }
 
   /// Constrói card de um frete
-  Widget _buildFreteCard(BuildContext context, SyncFrete frete) {
+  Widget _buildFreteCard(BuildContext context, SyncFrete frete, List<SyncFrete> todosFretes) {
     // Placeholder: quando frete ainda não chegou do backend
     if (frete.freteId == -1) {
       return Card(
@@ -1032,9 +1138,9 @@ class _HomeMotoristaPageState extends State<HomeMotoristaPage> with WidgetsBindi
                         )
                       else if (isPendente)
                         Chip(
-                          label: const Text(
-                            'Aguardando frete anterior',
-                            style: TextStyle(
+                          label: Text(
+                            todosFretes.length == 1 ? 'Pendente' : 'Aguardando frete anterior',
+                            style: const TextStyle(
                               fontSize: 12,
                               color: Colors.white,
                             ),
@@ -1222,12 +1328,14 @@ class _HomeMotoristaPageState extends State<HomeMotoristaPage> with WidgetsBindi
                 },
               )
             else if (isPendente)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8.0),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
                 child: Text(
-                  'Aguardando conclusão do frete anterior',
+                  todosFretes.length == 1 
+                      ? 'Clique em "Iniciar Viagem" para começar' 
+                      : 'Aguardando conclusão do frete anterior',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 13,
                     fontStyle: FontStyle.italic,
                     color: Colors.grey,

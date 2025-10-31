@@ -52,6 +52,9 @@ dependencies:
   
   # WebView for panel access
   webview_flutter: ^4.4.2
+  
+  # Local notifications for Android/iOS
+  flutter_local_notifications: ^17.2.2
 
 dev_dependencies:
   flutter_test:
