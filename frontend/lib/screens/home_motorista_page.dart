@@ -396,77 +396,6 @@ class _HomeMotoristaPageState extends State<HomeMotoristaPage> with WidgetsBindi
     }
   }
 
-  /// Handler para cancelar rota
-  Future<void> _cancelarRota() async {
-    if (_syncState == null) return;
-
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Cancelar rota'),
-        content: const Text(
-          'Tem certeza que deseja cancelar esta rota? Os fretes não concluídos serão liberados e esta rota será marcada como cancelada.'
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Confirmar cancelamento'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmar != true) return;
-
-    setState(() { _isLoading = true; });
-
-    try {
-      // 1) Atualizar localmente
-      final stateAtual = await SyncStateUtils.loadSyncState() ?? _syncState!;
-      final novoState = await SyncStateService.cancelarRotaLocalmente(stateAtual);
-      setState(() { _syncState = novoState; });
-
-      // 2) Tentar enviar ao backend
-      try {
-        await RotaService.cancelarRotaAtual();
-      } catch (_) {
-        await StorageService.setString('pending_cancel_route', '1');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Cancelamento pendente de envio'),
-              backgroundColor: Colors.orange,
-              duration: Duration(seconds: 4),
-            ),
-          );
-        }
-      }
-
-      await BackgroundSyncService.stopBackgroundSyncLoop(reason: 'manual');
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Rota cancelada'),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao cancelar rota: $e'), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) setState(() { _isLoading = false; });
-    }
-  }
 
   /// Handler para botão "INICIAR VIAGEM"
   Future<void> _iniciarViagem() async {
@@ -842,27 +771,6 @@ class _HomeMotoristaPageState extends State<HomeMotoristaPage> with WidgetsBindi
                   padding: EdgeInsets.all(32.0),
                   child: Center(
                     child: Text('Nenhum frete disponível na rota'),
-                  ),
-                ),
-              ),
-
-            // Botão Cancelar rota (rodapé da lista)
-            if ((_syncState!.rotaAtiva == true) || fretesOrdenados.any((f) => f.statusRota == 'EM_EXECUCAO'))
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _isLoading ? null : _cancelarRota,
-                      icon: const Icon(Icons.cancel_presentation),
-                      label: const Text('Cancelar rota'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                    ),
                   ),
                 ),
               ),
