@@ -1,11 +1,11 @@
 {
-    "name": "frontend",
-    "short_name": "frontend",
+    "name": "App Motorista - Sistema de Gestão de Fretes",
+    "short_name": "App Motorista",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#1e3a8a",
     "theme_color": "#1e3a8a",
-    "description": "A new Flutter project.",
+    "description": "App Motorista - Sistema de Gestão de Fretes para Android e iOS",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

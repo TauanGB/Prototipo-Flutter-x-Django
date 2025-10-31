@@ -115,9 +115,14 @@ flutter:
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
 
-# Flutter Launcher Icons configuration - Apenas Android e iOS
+# Flutter Launcher Icons configuration - Android, iOS e Web
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true
   image_path: "assets/images/Logo_App_Motoristas.png"
   min_sdk_android: 21 # android min sdk min:16, default 21
+  web:
+    generate: true
+    image_path: "assets/images/Logo_App_Motoristas.png"
+    background_color: "#1e3a8a"
+    theme_color: "#1e3a8a"

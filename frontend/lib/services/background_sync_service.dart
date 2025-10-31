@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../config/api_endpoints.dart';
@@ -15,6 +16,17 @@ import '../services/storage_service.dart';
 /// 
 /// Executa sync com o backend a cada SYNC_INTERVAL_SECONDS quando rota_ativa = true
 /// Baseado no README_API_ENDPOINTS.md endpoint POST /api/fretes/motorista/sync/
+/// 
+/// PERMISSÕES ANDROID (AndroidManifest.xml):
+/// ✓ INTERNET - presente (linha 10)
+/// ✓ ACCESS_FINE_LOCATION - presente (linha 4)
+/// ✓ ACCESS_COARSE_LOCATION - presente (linha 5)
+/// ✓ FOREGROUND_SERVICE - presente (linha 14)
+/// ✓ FOREGROUND_SERVICE_LOCATION - presente (linha 15)
+/// ✓ FOREGROUND_SERVICE_DATA_SYNC - presente (linha 16)
+/// ✓ POST_NOTIFICATIONS - presente (linha 19)
+/// 
+/// Todas as permissões necessárias já estão configuradas no AndroidManifest.xml
 class BackgroundSyncService {
   static Timer? _syncTimer;
   static bool _isRunning = false;
@@ -79,6 +91,13 @@ class BackgroundSyncService {
   /// Verifica se rota_ativa = true antes de iniciar
   /// Usa SYNC_INTERVAL_SECONDS para frequência
   static Future<void> startBackgroundSyncLoop() async {
+    // Logar modo Android se aplicável
+    if (Platform.isAndroid) {
+      developer.log('[BG] iniciado via Android (background)', name: 'BackgroundSyncService');
+    } else {
+      developer.log('[BG] iniciado via Flutter widget (foreground)', name: 'BackgroundSyncService');
+    }
+
     // Se já está rodando, parar primeiro para reiniciar limpo
     if (_isRunning) {
       developer.log('⚠️ BG-SYNC: start (reiniciando - já estava rodando)', name: 'BackgroundSyncService');
@@ -175,11 +194,17 @@ class BackgroundSyncService {
   /// 5. Prepara payload para POST /api/fretes/motorista/sync/
   /// 6. Envia requisição
   /// 7. Processa resposta e limpa eventos confirmados
+  /// 
+  /// Permissões necessárias no AndroidManifest.xml:
+  /// - INTERNET (para requisições HTTP)
+  /// - ACCESS_FINE_LOCATION / ACCESS_COARSE_LOCATION (para obter localização)
+  /// - FOREGROUND_SERVICE / FOREGROUND_SERVICE_LOCATION (para serviço em foreground)
   static Future<void> performSyncTick() async {
     try {
-      developer.log('🔄 BG-SYNC: tick executando...', name: 'BackgroundSyncService');
+      developer.log('[BG] start tick', name: 'BackgroundSyncService');
 
       // 1. Carregar DriverSession
+      developer.log('[BG] carregando DriverSession...', name: 'BackgroundSyncService');
       final session = await SyncStateUtils.loadDriverSession();
       if (session == null || !session.isValid) {
         developer.log(
@@ -189,8 +214,10 @@ class BackgroundSyncService {
         await stopBackgroundSyncLoop(reason: '401');
         return;
       }
+      developer.log('[BG] DriverSession OK: motoristaId=${session.motoristaId}, isValid=${session.isValid}', name: 'BackgroundSyncService');
 
       // 2. Carregar SyncState
+      developer.log('[BG] carregando SyncState...', name: 'BackgroundSyncService');
       final state = await SyncStateUtils.loadSyncState();
       if (state == null) {
         developer.log(
@@ -199,6 +226,7 @@ class BackgroundSyncService {
         );
         return;
       }
+      developer.log('[BG] SyncState OK: rotaId=${state.rotaId}, rotaAtiva=${state.rotaAtiva}', name: 'BackgroundSyncService');
 
       // 3a. Se houver cancelamento pendente, priorizar este envio
       try {
@@ -206,7 +234,7 @@ class BackgroundSyncService {
         if (pending == '1') {
           final endpoints = ApiEndpoints();
           final urlCancel = endpoints.mobileCancelarRotaAtual;
-          developer.log('📤 BG-SYNC: tick - enviando cancelamento pendente...', name: 'BackgroundSyncService');
+          developer.log('[BG] enviando cancelamento pendente para: $urlCancel', name: 'BackgroundSyncService');
           final respCancel = await ApiClient.post(urlCancel, {}, requiresAuth: true);
           if (respCancel.statusCode == 200) {
             await StorageService.remove('pending_cancel_route');
@@ -215,9 +243,13 @@ class BackgroundSyncService {
             return;
           }
         }
-      } catch (_) {}
+      } catch (e, stackTrace) {
+        developer.log('[BG] erro ao processar cancelamento pendente: $e\nStack: $stackTrace', name: 'BackgroundSyncService');
+      }
 
       // 3b. Verificar se rota está ativa
+      developer.log('[BG] rotaAtiva? -> ${state.rotaAtiva}', name: 'BackgroundSyncService');
+      developer.log('[BG] freteEmExecucao? -> ${state.freteAtual != null ? "sim (freteId=${state.freteAtual?.freteId})" : "não"}', name: 'BackgroundSyncService');
       if (!state.rotaAtiva) {
         developer.log(
           'ℹ️ BG-SYNC: tick - rota não está ativa - encerrando cedo',
@@ -227,6 +259,7 @@ class BackgroundSyncService {
       }
 
       // 4. Capturar localização atual
+      developer.log('[BG] tentando obter localização...', name: 'BackgroundSyncService');
       final position = await LocationService.getCurrentPosition();
       if (position == null) {
         developer.log(
@@ -235,6 +268,7 @@ class BackgroundSyncService {
         );
         return;
       }
+      developer.log('[BG] localização OK: lat=${position.latitude}, lon=${position.longitude}', name: 'BackgroundSyncService');
 
       // 5. Atualizar SyncState com localização
       final stateComLocalizacao = SyncStateService.atualizarLocalizacao(
@@ -259,9 +293,24 @@ class BackgroundSyncService {
         name: 'BackgroundSyncService',
       );
 
+      // 8. Verificar token antes de enviar requisição
+      final token = await StorageService.getAuthToken();
+      if (token == null || token.isEmpty) {
+        developer.log('[BG] token ausente — abortando sync', name: 'BackgroundSyncService');
+        await stopBackgroundSyncLoop(reason: '401');
+        return;
+      }
+      // Logar apenas início do token (primeiros 10 caracteres) para segurança
+      final tokenPreview = token.length > 10 ? '${token.substring(0, 10)}...' : token;
+      developer.log('[BG] token encontrado: yes (Token $tokenPreview)', name: 'BackgroundSyncService');
+
       // 8. Enviar requisição POST /api/fretes/motorista/sync/
       final endpoints = ApiEndpoints();
       final url = endpoints.syncMotorista;
+      final uri = Uri.parse(url);
+      developer.log('[BG] enviando POST para /api/.../motorista/sync/', name: 'BackgroundSyncService');
+      developer.log('[BG] URL completa: $url', name: 'BackgroundSyncService');
+      developer.log('[BG] Host: ${uri.host}, Port: ${uri.port}, Scheme: ${uri.scheme}', name: 'BackgroundSyncService');
 
       final response = await ApiClient.post(
         url,
@@ -270,8 +319,10 @@ class BackgroundSyncService {
       );
 
       // 9. Processar resposta
+      developer.log('[BG] resposta HTTP: status=${response.statusCode}', name: 'BackgroundSyncService');
       if (response.statusCode == 200) {
         final responseData = json.decode(response.body) as Map<String, dynamic>;
+        developer.log('[BG] resposta HTTP: body=${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}${response.body.length > 500 ? "..." : ""}', name: 'BackgroundSyncService');
 
         final eventosProcessados = 
             responseData['eventos_processados_detalhes'] as List<dynamic>? ?? [];
@@ -299,6 +350,7 @@ class BackgroundSyncService {
           '🔒 BG-SYNC: tick - token inválido/expirado - parando (401)',
           name: 'BackgroundSyncService',
         );
+        developer.log('[BG] resposta HTTP 401: body=${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}${response.body.length > 500 ? "..." : ""}', name: 'BackgroundSyncService');
         await stopBackgroundSyncLoop(reason: '401');
       } else if (response.statusCode == 409) {
         // Conflito de rota/frete - registrar para UI exibir banner
@@ -310,6 +362,7 @@ class BackgroundSyncService {
           '⚠️ BG-SYNC: tick - conflito (409) - parando',
           name: 'BackgroundSyncService',
         );
+        developer.log('[BG] resposta HTTP 409: body=${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}${response.body.length > 500 ? "..." : ""}', name: 'BackgroundSyncService');
         // Parar o loop conforme regra de stop seguro para 409
         await stopBackgroundSyncLoop(reason: '409');
       } else {
@@ -318,21 +371,28 @@ class BackgroundSyncService {
           '⚠️ BG-SYNC: tick - erro HTTP ${response.statusCode} - mantendo fila pendente',
           name: 'BackgroundSyncService',
         );
+        developer.log('[BG] resposta HTTP ${response.statusCode}: body=${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}${response.body.length > 500 ? "..." : ""}', name: 'BackgroundSyncService');
         // NÃO limpar fila em caso de erro - deixar para próxima execução
       }
-    } on UnauthorizedException {
+    } on UnauthorizedException catch (e, stackTrace) {
       developer.log(
         '🔒 BG-SYNC: tick - não autorizado - parando (401)',
         name: 'BackgroundSyncService',
       );
+      developer.log('[BG] erro de autenticação capturado: $e', name: 'BackgroundSyncService');
+      developer.log('[BG] stackTrace: $stackTrace', name: 'BackgroundSyncService');
       await stopBackgroundSyncLoop(reason: '401');
-    } catch (e) {
+    } catch (e, stackTrace) {
       // Erro de rede/timeout/etc - não limpar fila, apenas logar
       developer.log(
         '❌ BG-SYNC: tick - erro: $e - mantendo fila pendente',
         name: 'BackgroundSyncService',
       );
+      developer.log('[BG] erro de rede capturado: $e', name: 'BackgroundSyncService');
+      developer.log('[BG] stackTrace: $stackTrace', name: 'BackgroundSyncService');
       // NÃO limpar fila - deixar para próxima execução
+    } finally {
+      developer.log('[BG] encerrando tick', name: 'BackgroundSyncService');
     }
   }
 
